@@ -2224,7 +2224,7 @@ async function loadAudit() {
 /* Пользовательские подписи к системным полям и ключам локалей. */
 function tokenScopeChip(tk) {
   const write = String(tk.scopes || '').includes('write');
-  return '<span class="tok-scope ' + (write ? 'on' : '') + '">' + esc(t(write ? 'agents.scope_write' : 'agents.scope_read')) + '</span>';
+  return '<span class="tok-scope ' + (write ? 'on' : '') + '">' + esc(tr(write ? 'agents.scope_write' : 'agents.scope_read')) + '</span>';
 }
 
 function tokenStatus(tk) {

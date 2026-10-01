@@ -49,6 +49,9 @@ const data = {
   ],
   members: [{ id: 1, name: 'Аня', color: '#6BBFFF', initials: 'А' }],
   stages: stagesSeed,
+  tokens: [],        // API-токены (создаются в ходе теста)
+  tokenSeq: 0,
+  createdFullTokens: {}, // полный token из ответа POST — по id
 };
 
 window.fetch = async (url, opts) => {
@@ -78,6 +81,23 @@ window.fetch = async (url, opts) => {
   }
   if (u.startsWith('/api/members')) return resp(200, { members: data.members });
   if (u === '/api/stages') return resp(200, data.stages);
+  if (u === '/api/tokens' && method === 'GET') {
+    const rows = data.tokens.map(({ token, ...rest }) => rest); // список без полных значений (как сервер)
+    return resp(200, { tokens: rows });
+  }
+  if (u === '/api/tokens' && method === 'POST') {
+    const b = JSON.parse(opts.body);
+    data.tokenSeq++;
+    const full = 'kb_raw_' + data.tokenSeq + '_full_value';
+    data.createdFullTokens[data.tokenSeq] = full;
+    data.tokens.push({
+      id: data.tokenSeq, name: b.name, prefix: 'kb_' + data.tokenSeq,
+      scopes: Array.isArray(b.scopes) ? b.scopes.join(',') : String(b.scopes || 'write'),
+      created_at: '2026-10-01T12:57:36Z', expires_at: null, revoked_at: null,
+    });
+    // Полное значение — один раз, в ответе на создание (как реальный сервер).
+    return resp(200, { id: data.tokenSeq, name: b.name, prefix: 'kb_' + data.tokenSeq, scopes: 'write', created_at: '2026-10-01T12:57:36Z', expires_at: null, token: full });
+  }
   if (u.startsWith('/api/custom-fields')) return resp(200, { fields: [] });
   if (u === '/api/view-fields' && method === 'GET') {
     const view = u.split('view=')[1] || 'KANBAN';
@@ -94,7 +114,7 @@ function defaultRows() {
 }
 
 const w = window;
-w.eval(appSrc + '\n;window.__test = { state, renderBody, boot, renderApp, renderSidebar };');
+w.eval(appSrc + '\n;window.__test = { state, renderBody, boot, renderApp, renderSidebar, openAgentsPanel, closeAgentsPanel, renderAgentsModal };');
 
 let passed = 0, failed = 0;
 function ok(cond, name) {
@@ -281,6 +301,33 @@ function ok(cond, name) {
   ok(mfs && mfs.querySelectorAll('option').length === stagesSeed.length + (stagesSeed.some((x) => x.id === 'DISCUSSION') ? 0 : 0), 'модалка: селект стадии из динамических этапов (' + (mfs ? mfs.options.length : 'нет') + ' опций)');
   const mfp = document.querySelector('#mf-project');
   ok(mfp && !![...mfp.options].find((o) => o.value === 'none'), 'модалка: селект проекта содержит «Без проекта»');
+
+  /* --- Панель «Agents & tokens»: рендер с непустым списком (регрессия 565c1d2) --- */
+  w.__test.openAgentsPanel();
+  await new Promise((r) => setTimeout(r, 10)); // loadTokens отработал
+  const am = document.querySelector('#agents-modal');
+  ok(!!am, 'модалка агентов открылась');
+  // Список ещё пуст → «нет токенов»; ошибок рендера быть не должно
+  ok(!!am.querySelector('.tok-list .side-empty'), 'пустой список: строка «нет токенов»');
+  // Создаём токен через форму
+  am.querySelector('#tok-name').value = 'manager';
+  am.querySelector('#tok-form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  ok(document.querySelectorAll('#agents-modal .tok-row').length === 1, 'после создания 1 .tok-row (рендер не упал)');
+  ok(document.querySelector('#agents-modal .tok-scope') !== null, 'scope-чип отрисовался (регрессия t→tr)');
+  ok(document.querySelector('#nt-value') && document.querySelector('#nt-value').textContent.indexOf('kb_raw_') === 0, 'полное значение токена показано один раз');
+  // Повторный рендер модалки (как при следующем открытии): список из state.tokens не бросает
+  w.__test.renderAgentsModal();
+  ok(document.querySelectorAll('#agents-modal .tok-row').length === 1, 'повторный рендер с непустым списком не бросает');
+  // state обновлён
+  ok(w.__test.state.tokens.length === 1, 'в state один токен');
+  // Полное значение больше не в DOM (state.newToken сброшен только при закрытии — проверяем, что рендер без newToken его не рисует)
+  state_newToken_check: {
+    w.__test.state.newToken = null;
+    w.__test.renderAgentsModal();
+    ok(document.querySelector('#nt-value') === null, 'без state.newToken полное значение не рисуется');
+  }
+  w.__test.closeAgentsPanel();
 
   console.log('\nDOM-тест: ' + passed + ' OK, ' + failed + ' FAIL');
   process.exit(failed ? 1 : 0);
