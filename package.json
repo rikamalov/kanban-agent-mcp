@@ -1,13 +1,29 @@
 {
-  "name": "kanban",
-  "version": "2.0.0",
+  "name": "kanban-agent-mcp",
+  "version": "1.0.0",
   "private": false,
-  "description": "Self-hosted kanban board — Node stdlib backend, vanilla JS frontend, optional PostgreSQL",
+  "description": "Self-hosted kanban board for AI agents — Node stdlib backend, vanilla JS frontend, MCP server, optional PostgreSQL",
   "license": "MIT",
   "main": "server.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rikamalov/kanban-agent-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rikamalov/kanban-agent-mcp/issues"
+  },
+  "homepage": "https://github.com/rikamalov/kanban-agent-mcp#readme",
+  "keywords": [
+    "kanban",
+    "mcp",
+    "ai-agents",
+    "self-hosted",
+    "sqlite",
+    "postgresql"
+  ],
   "scripts": {
     "start": "node server.js",
-    "test": "node .test/kanban-ws-test-v2.js"
+    "test": "node .test/kanban-ws-test-v2.js && node .test/kanban-mobile-test.js"
   },
   "engines": {
     "node": ">=26"
