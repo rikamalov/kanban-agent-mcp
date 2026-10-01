@@ -1,0 +1,51 @@
+services:
+  kanban:
+    build: .
+    image: kanban:latest
+    container_name: kanban
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      - KANBAN_PORT=3100
+      - KANBAN_DATA=/data
+      # Первый старт: откройте http://localhost:3100/ — мастер настройки
+      # создаст учётную запись администратора (логин + пароль).
+      # KANBAN_SETUP_TOKEN: (опционально) если задан, мастер запросит этот
+      # токен — защита от того, чтобы посторонний успел первым открыть «/».
+      # - KANBAN_SETUP_TOKEN=change-me-long-random
+      # KANBAN_INSECURE_COOKIE=1: убрать флаг Secure у куки сессии. Нужно
+      # только если доска открыта по чистому HTTP без TLS-прокси (по умолчанию
+      # кука Secure и не отправится браузером по http://).
+      # PostgreSQL (опционально): раскомментируйте, чтобы хранить данные в PG
+      # вместо встроенного SQLite. Нужен либо DATABASE_URL, либо POSTGRES_*.
+      # - DATABASE_URL=postgres://kanban:kanban@postgres:5432/kanban
+      # - POSTGRES_HOST=postgres
+      # - POSTGRES_PORT=5432
+      # - POSTGRES_USER=kanban
+      # - POSTGRES_PASSWORD=kanban
+      # - POSTGRES_DB=kanban
+    volumes:
+      - kanban_data:/data
+
+  # Пример companion-сервиса для режима PostgreSQL: раскомментируйте вместе
+  # с DATABASE_URL/POSTGRES_* выше. В SQLite-режиме он не нужен.
+  # postgres:
+  #   image: postgres:17-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     - POSTGRES_USER=kanban
+  #     - POSTGRES_PASSWORD=kanban
+  #     - POSTGRES_DB=kanban
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+
+# ИМЯ зафиксировано: docker compose от своего имени создал "kanban_kanban_data"
+# и данные чуть не потерялись. Опция external:true означает: volume должен
+# существовать ЗАРАНЕЕ (docker volume create kanban_data) — compose не создаст
+# и не удалит его сам. Для простого старта можно убрать external:true, тогда
+# compose создаст named volume автоматически.
+volumes:
+  kanban_data:
+    external: true
+# pg_data: {}

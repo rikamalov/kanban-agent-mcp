@@ -1,0 +1,31 @@
+# Data directory (SQLite database, setup marker) — never commit
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+
+# Test scratch
+*.log
+.tmp/
+
+# npm
+node_modules/
+
+# Secrets / local config
+.env
+.env.*
+*.pem
+*.key
+
+# Editor / backup noise
+*.bak
+*.old
+*~
+*.swp
+.idea/
+.vscode/
+
+# OS noise
+.DS_Store
+Thumbs.db
