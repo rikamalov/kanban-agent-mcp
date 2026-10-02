@@ -4219,15 +4219,13 @@ function openTaskModal(id) {
         '<div class="field-row">' +
           '<label class="field"><span class="field-label">' + esc(tr('card.due')) + '</span>' +
             '<input id="mf-due" type="date" value="' + dateInputValue(t.due_at) + '"></label>' +
-          '<label class="field"><span class="field-label">' + esc(tr('card.assignee')) + '</span>' +
-            '<select id="mf-assignee">' + assigneeOpts + '</select></label>' +
-        '</div>' +
-        '<div class="field-row">' +
-          '<label class="field"><span class="field-label">' + esc(tr('task.urgency')) + '</span>' +
-            '<select id="mf-urgency">' +
+          '<label class="field field-urgency"><span class="field-label">' + esc(tr('task.urgency')) + '</span>' +
+            '<select id="mf-urgency"' + (t.urgency ? ' class="urg-sel urg-sel-' + esc(String(t.urgency).toLowerCase()) + '"' : '') + '>' +
               '<option value=""' + (t.urgency ? '' : ' selected') + '>—</option>' +
               ['h', 'm', 'l'].map((u) => '<option value="' + u + '"' + (String(t.urgency).toLowerCase() === u ? ' selected' : '') + '>' + esc(tr('task.urg_' + u)) + '</option>').join('') +
             '</select></label>' +
+          '<label class="field"><span class="field-label">' + esc(tr('card.assignee')) + '</span>' +
+            '<select id="mf-assignee">' + assigneeOpts + '</select></label>' +
         '</div>' +
         customsHTML +
         '<div class="field notes-field">' +
@@ -4279,6 +4277,11 @@ function openTaskModal(id) {
   };
   $('#modal-close', overlay).addEventListener('click', close);
   $('#mf-cancel', overlay).addEventListener('click', close);
+  /* Срочность: select в цвете выбранного значения (обновляется сразу при смене). */
+  const urgSel = $('#mf-urgency', overlay);
+  urgSel.addEventListener('change', () => {
+    urgSel.className = 'urg-sel urg-sel-' + urgSel.value;
+  });
   overlay.addEventListener('mousedown', (e) => {
     if (e.target === overlay) close();
   });

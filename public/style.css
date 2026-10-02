@@ -613,6 +613,17 @@ h1, h2, p { margin: 0; }
 }
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 1; min-width: 0; }
+/* Срочность: компактное поле в ряду со Сроком; сам select окрашен значением. */
+.field-urgency { flex: 0 0 130px; }
+select.urg-sel {
+  font-weight: 600;
+  color: #fff;
+  border-color: transparent;
+}
+select.urg-sel-h { background: var(--urg-high); }
+select.urg-sel-m { background: var(--urg-mid); }
+select.urg-sel-l { background: var(--urg-low); }
+select.urg-sel option { color: var(--text); background: var(--bg-input); font-weight: 500; }
 /* Широкая модалка (720px): поля в 2 колонки, многострочные — во всю ширину */
 @media (min-width: 640px) {
   .modal .field-row { gap: 14px; }
