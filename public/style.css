@@ -333,10 +333,12 @@ h1, h2, p { margin: 0; }
   width: 11px;
   height: 11px;
   border-radius: 3px;
+  margin-left: 5px;
   margin-right: 5px;
   flex-shrink: 0;
   vertical-align: -1px;
 }
+.urg-square + * { margin-left: -1px; }
 .urg-h { background: var(--urg-high); }
 .urg-m { background: var(--urg-mid); }
 .urg-l { background: var(--urg-low); }
@@ -450,6 +452,7 @@ h1, h2, p { margin: 0; }
 .col-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; }
 .col-name { font-size: 12.5px; font-weight: 600; }
 .col-count { font-size: 11.5px; color: var(--text-soft); }
+.col-head .col-add { margin-left: auto; padding: 4px 6px; }
 .col-cards {
   flex: 1;
   min-height: 48px;
@@ -459,7 +462,7 @@ h1, h2, p { margin: 0; }
   gap: 8px;
   padding: 4px 6px 10px;
 }
-.col-foot { padding: 2px 6px 4px; margin-bottom: 2px; }
+.col-foot { padding: 2px 6px 4px; }
 .col-add {
   display: inline-flex;
   align-items: center;
@@ -950,7 +953,7 @@ h1, h2, p { margin: 0; }
 }
 .cal-nodue-label:hover { color: var(--text); background: var(--hover-overlay); }
 .cal-nodue-chev { display: inline-flex; transition: transform 0.12s ease; }
-.cal-nodue:not(.collapsed) .cal-nodue-chev { transform: rotate(180deg); }
+.cal-nodue.collapsed .cal-nodue-chev { transform: rotate(180deg); }
 .cal-nodue.collapsed .cal-nodue-cards { display: none; }
 .cal-count { color: var(--text-soft); font-size: 11px; }
 .cal-nodue-cards {
