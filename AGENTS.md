@@ -118,8 +118,9 @@ After deploy checks: login via the API works, `/api/tasks` returns data.
    notes in **markdown preview** by default; editing is behind the
    `#notes-toggle` button (do not flip the default back).
 7. **Test suite:** DOM test `.test/kanban-ws-test-v2.js` (jsdom, mock fetch,
-   63 checks; includes the notes-open-in-markdown-preview scenario). Run:
-   `node .test/kanban-ws-test-v2.js` (jsdom from npm).
+  134 checks; includes the notes-open-in-markdown-preview and v9 scenarios:
+  urgency, project access, theme, add-on-top, no-due collapse). Run:
+  `node .test/kanban-ws-test-v2.js` (jsdom from npm).
    Mobile drawer: `.test/kanban-mobile-test.js` (35 checks: burger, scrim,
    side-open, vs-label, settings gear pop).
 8. **Calendar never touches position/stage**: calendar drag changes only

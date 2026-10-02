@@ -62,6 +62,10 @@ const I18N = {
     'sidebar.sign_out': 'Sign out',
     'settings.title': 'Settings',
     'settings.language': 'Language',
+    'settings.theme': 'Theme',
+    'settings.theme_system': 'System',
+    'settings.theme_light': 'Light',
+    'settings.theme_dark': 'Dark',
     'settings.change_password': 'Change password',
     'settings.current_password': 'Current password',
     'settings.new_password': 'New password',
@@ -96,6 +100,10 @@ const I18N = {
     'card.unassigned': 'Unassigned',
     'card.delete_confirm': 'Click again to delete',
     'card.moved_to': 'Task moved to ',
+    'task.urgency': 'Urgency',
+    'task.urg_h': 'High',
+    'task.urg_m': 'Medium',
+    'task.urg_l': 'Low',
     /* fields panel */
     'fields.panel': 'Field settings',
     'fields.add': 'Add field',
@@ -223,6 +231,9 @@ const I18N = {
     'misc.empty_title': 'Title cannot be empty',
     'misc.tasks_no_due': 'No due date',
     'misc.day_more': 'More',
+    'proj.access': 'Access',
+    'access.load_failed': 'Failed to load users',
+    'access.saved': 'Access updated',
   },
   ru: {
     'login.title': 'Kanban',
@@ -276,6 +287,10 @@ const I18N = {
     'sidebar.sign_out': 'Выйти',
     'settings.title': 'Настройки',
     'settings.language': 'Язык',
+    'settings.theme': 'Тема',
+    'settings.theme_system': 'Системная',
+    'settings.theme_light': 'Светлая',
+    'settings.theme_dark': 'Тёмная',
     'settings.change_password': 'Смена пароля',
     'settings.current_password': 'Текущий пароль',
     'settings.new_password': 'Новый пароль',
@@ -308,6 +323,10 @@ const I18N = {
     'card.unassigned': 'Не назначен',
     'card.delete_confirm': 'Нажмите ещё раз, чтобы удалить',
     'card.moved_to': 'Задача перенесена в «',
+    'task.urgency': 'Срочность',
+    'task.urg_h': 'Высокая',
+    'task.urg_m': 'Средняя',
+    'task.urg_l': 'Низкая',
     'fields.panel': 'Настройки полей',
     'fields.add': 'Добавить поле',
     'fields.name': 'Название поля',
@@ -428,6 +447,9 @@ const I18N = {
     'misc.empty_title': 'Название не может быть пустым',
     'misc.tasks_no_due': 'Без срока',
     'misc.day_more': 'Ещё',
+    'proj.access': 'Доступ',
+    'access.load_failed': 'Не удалось загрузить пользователей',
+    'access.saved': 'Доступ обновлён',
   },
   zh: {
     'login.title': '看板',
@@ -481,6 +503,10 @@ const I18N = {
     'sidebar.sign_out': '退出登录',
     'settings.title': '设置',
     'settings.language': '语言',
+    'settings.theme': '主题',
+    'settings.theme_system': '跟随系统',
+    'settings.theme_light': '浅色',
+    'settings.theme_dark': '深色',
     'settings.change_password': '修改密码',
     'settings.current_password': '当前密码',
     'settings.new_password': '新密码',
@@ -513,6 +539,10 @@ const I18N = {
     'card.unassigned': '未分配',
     'card.delete_confirm': '再次点击以删除',
     'card.moved_to': '任务已移动到「',
+    'task.urgency': '紧急',
+    'task.urg_h': '高',
+    'task.urg_m': '中',
+    'task.urg_l': '低',
     'fields.panel': '字段设置',
     'fields.add': '添加字段',
     'fields.name': '字段名称',
@@ -633,6 +663,9 @@ const I18N = {
     'misc.empty_title': '标题不能为空',
     'misc.tasks_no_due': '无截止日期',
     'misc.day_more': '更多',
+    'proj.access': '访问',
+    'access.load_failed': '无法加载用户',
+    'access.saved': '访问权限已更新',
   },
 };
 
@@ -717,13 +750,14 @@ function stageTextDark(id) {
 }
 
 /* системные ключи полей представления; подписи — локализуемые (I18N) */
-const SYSTEM_KEYS = ['title', 'stage', 'project', 'due_at', 'assignee', 'created_at'];
+const SYSTEM_KEYS = ['title', 'stage', 'project', 'due_at', 'assignee', 'urgency', 'created_at'];
 const FIELD_LABELS = {
   get title() { return tr('card.title'); },
   get stage() { return tr('misc.stage'); },
   get project() { return tr('misc.project'); },
   get due_at() { return tr('misc.due'); },
   get assignee() { return tr('misc.assignee'); },
+  get urgency() { return tr('task.urgency'); },
   get created_at() { return tr('misc.created'); },
 };
 const TYPE_LABELS = {
@@ -884,6 +918,13 @@ function taskNum(t) {
   return '#' + (t != null && t.id != null ? t.id : '?');
 }
 
+/* Квадратик срочности слева от #id: h/m/l — цветной квадрат, null — ничего. */
+function urgencySquareHTML(t) {
+  const u = t && t.urgency != null ? String(t.urgency).toLowerCase() : '';
+  if (u !== 'h' && u !== 'm' && u !== 'l') return '';
+  return '<span class="urg-square urg-' + u + '" title="' + esc(tr('task.urgency') + ': ' + tr('task.urg_' + u)) + '"></span>';
+}
+
 function memberById(id) {
   return state.members.find((m) => String(m.id) === String(id)) || null;
 }
@@ -1038,6 +1079,15 @@ const state = {
   tasksCollapsed: (function () {     // свёрнут блок «Задачи» в рабочей области
     try { return localStorage.getItem('kanban.tasksCollapsed') === '1'; } catch (_) { return false; }
   })(),
+  calNoDueCollapsed: (function () {  // свёрнут блок «Без срока» в календаре
+    try { return localStorage.getItem('kanban.calNoDueCollapsed') === '1'; } catch (_) { return false; }
+  })(),
+  theme: (function () {               // тема: system | light | dark
+    try {
+      const th = localStorage.getItem('kanban.theme');
+      return (th === 'dark' || th === 'light' || th === 'system') ? th : 'system';
+    } catch (_) { return 'system'; }
+  })(),
   calDragged: null,                  // id задачи при перетаскивании в календаре
   calCursor: null,                   // 1-е число показанного месяца (инициализация ниже)
   fpAddOpen: false,                  // открыта форма «Добавить поле»
@@ -1058,6 +1108,7 @@ const state = {
   users: [],                         // учётные записи (admin)
   newUser: null,                     // только что созданный пользователь
   userDelArmed: null,                // id пользователя с активированной мусоркой
+  accessPid: null,                   // открыт попап «Доступ» для проекта (id)
 };
 
 /* calCursor: 1-е число текущего месяца; хранится локальной датой */
@@ -1071,6 +1122,9 @@ try {
   const savedVT = localStorage.getItem('kanban.viewType');
   if (savedVT === 'TABLE' || savedVT === 'CALENDAR') state.viewType = savedVT;
 } catch (_) {}
+
+/* Тема: применяем сохранённую (kanban.theme) сразу при старте */
+applyTheme();
 
 /* календарь: попап «Ещё N» закрывается при смене месяца/вида */
 state.calPop = null;
@@ -1123,6 +1177,43 @@ function wireLangSwitcher(hostEl, rerender) {
   });
 }
 
+/* ---------- Тема: system | light | dark (localStorage kanban.theme) ---------- */
+
+/* dataset.theme на <html>: 'dark' | '' — палитра в style.css ([data-theme="dark"]). */
+function applyTheme() {
+  const pref = state.theme || 'system';
+  let dark = false;
+  try {
+    if (pref === 'dark') dark = true;
+    else if (pref === 'system') dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  } catch (_) {
+    dark = pref === 'dark';
+  }
+  document.documentElement.dataset.theme = dark ? 'dark' : '';
+  /* meta в head держим в синхроне с палитрой */
+  const cs = document.querySelector('meta[name="color-scheme"]');
+  if (cs) cs.setAttribute('content', dark ? 'dark' : 'light');
+  const tc = document.querySelector('meta[name="theme-color"]');
+  if (tc) tc.setAttribute('content', dark ? '#141519' : '#fcfcfc');
+  /* favicon перекрашиваем под акцент темы */
+  const fav = document.querySelector('link[rel="icon"]');
+  if (fav) {
+    const accent = dark ? '#5a76e8' : '#4662d5';
+    try {
+      fav.href = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='" + accent.replace('#', '%23') + "'/%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='16' font-weight='600' fill='%23ffffff' text-anchor='middle'%3EK%3C/text%3E%3C/svg%3E";
+    } catch (_) {}
+  }
+}
+
+/* Пока выбран режим «system», смена системной темы применяется на лету. */
+try {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if ((state.theme || 'system') === 'system') applyTheme();
+  });
+} catch (_) { /* старые браузеры — не критично */ }
+
+const THEME_OPTIONS = ['system', 'light', 'dark'];
+
 /* ---------- Первичная настройка (setup wizard): публичная страница ----------
    Собственный входной файл (public/setup.html + public/setup.js); app.js
    остается за аутентифицированным приложением. */
@@ -1140,6 +1231,10 @@ function settingsPopHTML() {
       '<div class="ssp-label">' + esc(tr('settings.language')) + '</div>' +
       '<div class="ssp-lang">' + I18N_LOCALES.map((l) =>
         '<button type="button" class="ssp-lang-btn' + (state.lang === l ? ' on' : '') + '" data-lang="' + l + '">' + I18N_NAMES[l] + '</button>'
+      ).join('') + '</div>' +
+      '<div class="ssp-label">' + esc(tr('settings.theme')) + '</div>' +
+      '<div class="ssp-theme">' + THEME_OPTIONS.map((th) =>
+        '<button type="button" class="ssp-theme-btn' + ((state.theme || 'system') === th ? ' on' : '') + '" data-theme="' + th + '">' + esc(tr('settings.theme_' + th)) + '</button>'
       ).join('') + '</div>' +
       '<form class="ssp-pass" id="pass-form">' +
         '<div class="ssp-label">' + esc(tr('settings.change_password')) + '</div>' +
@@ -1185,6 +1280,17 @@ function wireSettingsPop(side) {
       state.lang = lang;
       try { localStorage.setItem('kanban.lang', lang); } catch (_) {}
       toggleSettingsPop(true); // перерисовать в новом языке, попап остаётся открытым
+    });
+  });
+  // Переключатели темы внутри попапа (system/light/dark).
+  pop.querySelectorAll('.ssp-theme-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      const th = b.dataset.theme;
+      if (!THEME_OPTIONS.includes(th) || th === state.theme) return;
+      state.theme = th;
+      try { localStorage.setItem('kanban.theme', th); } catch (_) {}
+      applyTheme();
+      toggleSettingsPop(true); // перерисовать попап — активная кнопка сменилась
     });
   });
   // Админ: переход к управлению пользователями.
@@ -1450,6 +1556,8 @@ function renderBody() {
 const WEEKDAYS = WEEKDAY_MIN[state.lang] || WEEKDAY_MIN.en;
 
 function taskDateKey(t) {
+  /* t.due_at==null → null (задача попадает в блок «Без срока», не в сетку) */
+  if (t == null || t.due_at == null) return null;
   const d = parseDate(t.due_at);
   if (!d) return null;
   const p = (n) => String(n).padStart(2, '0');
@@ -1553,9 +1661,14 @@ function renderCalendar() {
 
   /* Задачи без срока — отдельной строкой снизу */
   const noDue = visibleTasks().filter((t) => !taskDateKey(t));
+  const noDueCollapsed = !!state.calNoDueCollapsed;
   const noDueHTML =
-    '<div class="cal-nodue' + (noDue.length ? '' : ' empty') + '">' +
-      '<div class="cal-nodue-label">' + ICONS.calendar + ' ' + esc(tr('board.no_due')) + ' <span class="cal-count">' + noDue.length + '</span></div>' +
+    '<div class="cal-nodue' + (noDueCollapsed ? ' collapsed' : '') + (noDue.length ? '' : ' empty') + '">' +
+      '<button type="button" class="cal-nodue-label" id="cal-nodue-toggle" title="' + esc(noDueCollapsed ? tr('sidebar.expand') : tr('sidebar.collapse')) + '">' +
+        '<span class="cal-nodue-chev">' + ICONS.chev + '</span>' +
+        ICONS.calendar + ' ' + esc(tr('board.no_due')) +
+        ' <span class="cal-count">' + noDue.length + '</span>' +
+      '</button>' +
       '<div class="cal-nodue-cards">' +
         (noDue.length
           ? noDue.map((t) => renderCalCard(t, true)).join('')
@@ -1597,6 +1710,13 @@ function renderCalendar() {
 
   /* Кнопки попапа дня (бейдж-число и «Ещё N») + клик по карточке */
   wrap.addEventListener('click', (e) => {
+    /* тоггл «Без срока»: сворачивание + persist в localStorage */
+    if (e.target.closest('#cal-nodue-toggle')) {
+      state.calNoDueCollapsed = !state.calNoDueCollapsed;
+      try { localStorage.setItem('kanban.calNoDueCollapsed', state.calNoDueCollapsed ? '1' : '0'); } catch (_) {}
+      renderBody();
+      return;
+    }
     const popBtn = e.target.closest('[data-pop]');
     if (popBtn) {
       const key = popBtn.dataset.pop;
@@ -1648,6 +1768,7 @@ function renderCalCard(t, inMonth) {
   return '<article class="cal-card' + (inMonth === false ? ' out' : '') + (overdue ? ' overdue' : '') + (done ? ' done' : '') + '" draggable="true" data-id="' + esc(t.id) + '" title="' + esc(stageLabel(stage)) + (overdue ? ' · ' + tr('board.overdue') : '') + '">' +
     '<span class="cal-stage-bar" style="background:' + esc(stageColor(stage)) + '"></span>' +
     '<span class="cal-card-grip">' + ICONS.grip + '</span>' +
+    urgencySquareHTML(t) +
     '<span class="cal-card-title">' + esc(t.title) + '</span>' +
     '<span class="cal-assignee">' + (assigneeOf(t) ? esc((assigneeOf(t).initials || initials(assigneeOf(t).name))) : '') + '</span>' +
   '</article>';
@@ -2625,7 +2746,11 @@ function openProjectCtx(p, anchorBtn) {
   const bRen = el('<button class="ctx-item" type="button">' + esc(tr('rename')) + '</button>');
   const bArc = el('<button class="ctx-item" type="button">' + esc(p.archived ? tr('sidebar.from_archive') : tr('sidebar.to_archive')) + '</button>');
   const bDel = el('<button class="ctx-item danger" type="button">' + esc(tr('delete')) + '</button>');
-  menu.appendChild(bRen); menu.appendChild(bArc); menu.appendChild(bDel);
+  const isAdminCtx = !!(state.me && state.me.role === 'admin');
+  const bAcc = isAdminCtx ? el('<button class="ctx-item" type="button">' + esc(tr('proj.access')) + '</button>') : null;
+  menu.appendChild(bRen); menu.appendChild(bArc);
+  if (bAcc) menu.appendChild(bAcc);
+  menu.appendChild(bDel);
   document.body.appendChild(menu);
   const r = menu.getBoundingClientRect();
   const a = anchorBtn.getBoundingClientRect();
@@ -2634,6 +2759,13 @@ function openProjectCtx(p, anchorBtn) {
   menu.style.left = nx + 'px';
   menu.style.top = ny + 'px';
   state.ctxMenu = menu;
+
+  if (bAcc) {
+    bAcc.addEventListener('click', () => {
+      closeCtxMenu();
+      openProjectAccess(p.id);
+    });
+  }
 
   bRen.addEventListener('click', () => {
     closeCtxMenu();
@@ -2673,6 +2805,78 @@ function openProjectCtx(p, anchorBtn) {
       toast(tr('misc.project_deleted'));
     } catch (err) {
       toast(tr('toast.delete_failed') + ': ' + err.message, 'error');
+    }
+  });
+}
+
+/* --- Модалка «Доступ к проекту» (только admin) --- */
+
+async function openProjectAccess(pid) {
+  closeCtxMenu();
+  closeMobileSide();
+  const overlay = $('#modal-overlay');
+  if (!overlay) return;
+  overlay.hidden = false;
+  overlay.innerHTML = '<div class="modal" role="dialog" aria-modal="true" id="access-modal"><div class="modal-body"><p class="side-empty">' + esc(tr('loading')) + '</p></div></div>';
+  overlay.onclick = (e) => { if (e.target === overlay) closeAccessPanel(); };
+  state.accessPid = pid;
+  try {
+    /* оба списка — админ-роуты; их отсутствие (сервер старее) → fallback-сообщение */
+    const [users, acc] = await Promise.all([
+      api('GET', '/api/users'),
+      api('GET', '/api/projects/' + encodeURIComponent(pid) + '/access'),
+    ]);
+    state.users = Array.isArray(users) ? users : asList(users, ['users', 'items']);
+    const granted = acc && acc.user_ids ? acc.user_ids : (Array.isArray(acc) ? acc : asList(acc, ['user_ids', 'users']));
+    renderAccessModal(new Set(granted.map(String)));
+  } catch (err) {
+    rethrowAuth(err);
+    state.accessPid = null;
+    toast(tr('access.load_failed') + ': ' + err.message, 'error');
+    closeAccessPanel();
+  }
+}
+
+function closeAccessPanel() {
+  const overlay = $('#modal-overlay');
+  if (overlay) { overlay.hidden = true; overlay.innerHTML = ''; overlay.onclick = null; }
+  state.accessPid = null;
+}
+
+/* Строим DOM модалки доступа и вешаем обработчики. */
+function renderAccessModal(grantedSet) {
+  const modal = $('#access-modal');
+  const pid = state.accessPid;
+  if (!modal || pid == null) return null;
+  modal.innerHTML =
+    '<div class="modal-head">' +
+      '<span class="modal-title">' + ICONS.users + ' ' + esc(tr('proj.access')) + '</span>' +
+      '<button class="icon-btn" id="access-close" title="' + esc(tr('close')) + '">' + ICONS.x + '</button>' +
+    '</div>' +
+    '<div class="modal-body">' +
+      '<div class="tok-list" id="access-list">' +
+        state.users.map((u) =>
+          '<label class="acc-row" data-uid="' + esc(u.id) + '">' +
+            '<input type="checkbox" class="acc-check" data-uid="' + esc(u.id) + '"' + (grantedSet.has(String(u.id)) ? ' checked' : '') + '>' +
+            '<span class="member-dot" style="background:' + avatarColor(u.username) + '">' + esc(initials(u.display_name || u.username)) + '</span>' +
+            '<span class="tok-name">' + esc(u.username) + '</span>' +
+            (u.display_name && u.display_name !== u.username ? '<span class="user-display">' + esc(u.display_name) + '</span>' : '') +
+          '</label>'
+        ).join('') +
+      '</div>' +
+      '<button class="btn primary" id="access-save">' + esc(tr('save')) + '</button>' +
+    '</div>';
+  $('#access-close', modal).addEventListener('click', closeAccessPanel);
+  $('#access-save', modal).addEventListener('click', async () => {
+    const ids = [...modal.querySelectorAll('.acc-check:checked')].map((c) => c.dataset.uid);
+    try {
+      await api('PUT', '/api/projects/' + encodeURIComponent(pid) + '/access', { user_ids: ids });
+      toast(tr('access.saved'), 'ok');
+      closeAccessPanel();
+      await Promise.all([loadCore(), reloadViewFields()]);
+      renderApp();
+    } catch (err) {
+      toast(tr('toast.save_failed') + ': ' + err.message, 'error');
     }
   });
 }
@@ -3308,10 +3512,10 @@ function renderColumn(stage) {
         '<span class="col-name">' + esc(stageLabel(stage)) + '</span>' +
         '<span class="col-count">' + tasks.length + '</span>' +
       '</div>' +
-      '<div class="col-cards"></div>' +
       '<div class="col-foot">' +
         '<button class="col-add">' + ICONS.plus + ' ' + esc(tr('kanban.new')) + '</button>' +
       '</div>' +
+      '<div class="col-cards"></div>' +
     '</div>'
   );
 
@@ -3419,7 +3623,7 @@ function renderCard(t) {
   }
   const card = el(
     '<article class="card" draggable="true" data-id="' + esc(t.id) + '">' +
-      '<div class="card-title"><span class="task-num">#' + esc(t.id) + '</span>' + esc(t.title) + '</div>' +
+      '<div class="card-title">' + urgencySquareHTML(t) + '<span class="task-num">#' + esc(t.id) + '</span>' + esc(t.title) + '</div>' +
       (chips ? '<div class="card-chips">' + chips + '</div>' : '') +
     '</article>'
   );
@@ -3466,6 +3670,7 @@ function sortValue(t, key) {
     return d ? d.getTime() : Number.POSITIVE_INFINITY;
   }
   if (key === 'assignee') return assigneeLabel(t).toLowerCase();
+  if (key === 'urgency') return { h: 0, m: 1, l: 2 }[String(t.urgency || '').toLowerCase()] ?? 3;
   if (key === 'created_at') {
     const d = parseDate(t.created_at);
     return d ? d.getTime() : 0;
@@ -3526,7 +3731,10 @@ function tableCellHTML(t, r) {
   const k = r.field_key;
   const ed = (kind, key) => ' data-edit="' + kind + '"' + (key ? ' data-key="' + esc(key) + '"' : '');
   if (k === 'title') {
-    return '<td class="td-title"' + ed('title') + '><span class="task-num">#' + esc(t.id) + '</span>' + esc(t.title) + '</td>';
+    return '<td class="td-title"' + ed('title') + '>' + urgencySquareHTML(t) + '<span class="task-num">#' + esc(t.id) + '</span>' + esc(t.title) + '</td>';
+  }
+  if (k === 'urgency') {
+    return '<td class="td-plain">' + urgencySquareHTML(t) + '</td>';
   }
   if (k === 'stage') {
     const dark = stageTextDark(t.stage);
@@ -3588,13 +3796,15 @@ function renderTable() {
   const bodyHTML = tasks.length
     ? tasks.map((t) => tableRowHTML(t, fields)).join('')
     : '<tr class="tr-empty"><td colspan="' + Math.max(fields.length, 1) + '">' + esc(tr('board.no_tasks')) + '</td></tr>';
+  const tableFoot = '<div class="table-foot" id="table-foot">' +
+    '<button class="col-add" id="table-add-btn">' + ICONS.plus + ' ' + esc(tr('board.new_task')) + '</button>' +
+  '</div>';
+  const tableHead = '<div class="table-head" id="table-head-row">' + tableFoot + '</div>';
 
   const wrap = el(
     '<div class="table-wrap">' +
+      tableHead +
       '<table class="grid"><thead><tr>' + headHTML + '</tr></thead><tbody>' + bodyHTML + '</tbody></table>' +
-      '<div class="table-foot" id="table-foot">' +
-        '<button class="col-add" id="table-add-btn">' + ICONS.plus + ' ' + esc(tr('board.new_task')) + '</button>' +
-      '</div>' +
     '</div>'
   );
 
@@ -4013,6 +4223,13 @@ function openTaskModal(id) {
           '<label class="field"><span class="field-label">' + esc(tr('card.assignee')) + '</span>' +
             '<select id="mf-assignee">' + assigneeOpts + '</select></label>' +
         '</div>' +
+        '<div class="field-row">' +
+          '<label class="field"><span class="field-label">' + esc(tr('task.urgency')) + '</span>' +
+            '<select id="mf-urgency">' +
+              '<option value=""' + (t.urgency ? '' : ' selected') + '>—</option>' +
+              ['h', 'm', 'l'].map((u) => '<option value="' + u + '"' + (String(t.urgency).toLowerCase() === u ? ' selected' : '') + '>' + esc(tr('task.urg_' + u)) + '</option>').join('') +
+            '</select></label>' +
+        '</div>' +
         customsHTML +
         '<div class="field notes-field">' +
           '<div class="notes-head">' +
@@ -4088,10 +4305,12 @@ function openTaskModal(id) {
     const title = $('#mf-title', overlay).value.trim();
     if (!title) { toast(tr('misc.empty_title'), 'error'); return; }
     const due = $('#mf-due', overlay).value; // YYYY-MM-DD или ''
+    const uv = $('#mf-urgency', overlay).value;
     const payload = {
       title,
       stage: $('#mf-stage', overlay).value,
       due_at: due || null,
+      urgency: uv === '' ? null : uv,
       notes: $('#mf-notes', overlay).value,
     };
     const pv = $('#mf-project', overlay).value;

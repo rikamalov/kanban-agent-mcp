@@ -92,6 +92,8 @@ const SYSTEM_FIELDS = {
   due_at: 'Due date',
   assignee: 'Assignee',
   created_at: 'Created',
+  // v9: срочность задачи — колонка в «Таблице».
+  urgency: 'Urgency',
 };
 // Структура «системных» полей одна во всех локалях фронтенда: фронт
 // подставляет локализованные подписи по ключу (I18N), здесь — EN по умолчанию.
@@ -463,6 +465,11 @@ CREATE TABLE IF NOT EXISTS view_field (
   label      TEXT,
   position   REAL NOT NULL DEFAULT 0,
   is_visible INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS project_access (
+  project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES ${USER_TABLE}(id) ON DELETE CASCADE,
+  PRIMARY KEY (project_id, user_id)
 );
 `;
 
@@ -842,6 +849,55 @@ CREATE TABLE IF NOT EXISTS view_field (
 migrateV2();
 
 // ---------------------------------------------------------------------------
+// Миграция v8: срочность задачи + доступ не-админов к проектам.
+//   task.urgency TEXT NULL ('h' | 'm' | 'l', NULL = нет)
+//   project_access(project_id, user_id) — композитный PK, заменяемый набор
+//   view_field(field_key='urgency', view_type='TABLE') — колонка срочности
+//   в «Таблице», сидируется как новый системный ключ (idempotentно).
+// Запуск ПОСЛЕ v2: сид системных TABLE-полей в v2 не должен блокироваться
+// наличием 'urgency' (иначе дефолтный набор остался бы невидимым).
+// ---------------------------------------------------------------------------
+
+function migrateV8() {
+  const migrated = [];
+
+  // task.urgency: ALTER, если колонки ещё нет.
+  const taskCols = tableColumns('task');
+  if (!taskCols.includes('urgency')) {
+    db.exec('ALTER TABLE task ADD COLUMN urgency TEXT');
+    migrated.push('task.urgency added');
+  }
+
+  // project_access: CREATE TABLE IF NOT EXISTS — идемпотентно само по себе.
+  db.exec(migDdl(`
+CREATE TABLE IF NOT EXISTS project_access (
+  project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES ${USER_TABLE}(id) ON DELETE CASCADE,
+  PRIMARY KEY (project_id, user_id)
+);
+  `));
+
+  // Сид view_field для нового системного ключа 'urgency': тот же механизм,
+  // что у custom-полей (createCustomField) — строка в TABLE (max+1), is_visible=1.
+  // Запуск ПОСЛЕ migrateV2: на свежей БД к этому моменту TABLE-дефолты уже
+  // сиидированы (v2 → v9), поэтому ветка hasTableDefaults всегда истинна.
+  const seededNow = [];
+  if (!db.prepare("SELECT COUNT(*) AS c FROM view_field WHERE view_type = 'TABLE' AND field_key = 'urgency'").get().c) {
+    const hasTableDefaults = db.prepare("SELECT COUNT(*) AS c FROM view_field WHERE view_type = 'TABLE'").get().c > 0;
+    if (hasTableDefaults) {
+      const maxPos = db.prepare("SELECT COALESCE(MAX(position), 0) AS m FROM view_field WHERE view_type = 'TABLE'").get().m;
+      db.prepare('INSERT INTO view_field (view_type, field_key, label, position, is_visible) VALUES (?, ?, ?, ?, 1)')
+        .run('TABLE', 'urgency', SYSTEM_FIELDS.urgency, maxPos + 1);
+      seededNow.push('TABLE');
+    }
+  }
+  if (seededNow.length > 0) migrated.push(`view_field: urgency seeded into ${seededNow.join(', ')}`);
+
+  if (migrated.length > 0) console.log(`[kanban] Migrations v8: ${migrated.join('; ')}`);
+}
+migrateV8();
+
+// ---------------------------------------------------------------------------
 // Помощники
 // ---------------------------------------------------------------------------
 
@@ -915,7 +971,26 @@ function getProject(id) {
   return db.prepare('SELECT id, name, color, position, archived, created_at FROM project WHERE id = ?').get(id);
 }
 
-const TASK_COLUMNS = 'id, project_id, title, stage, position, due_at, assignee, assignee_id, notes, created_at, updated_at';
+const TASK_COLUMNS = 'id, project_id, title, stage, position, due_at, assignee, assignee_id, notes, urgency, created_at, updated_at';
+
+// v9: доступ не-админов к проектам (project_access). Возвращает null, когда
+// фильтр не применяется (bearer-токен — user_id нет, не скоупится осознанно;
+// либо admin-сессия), либо user_id member-сессии — тогда видимы/доступны
+// только проекты из project_access, а задачи «без проекта» не видны вовсе.
+function sessionProjectFilter(auth) {
+  const user = auth && auth.via === 'user' ? auth.user : null;
+  if (!user || user.role === 'admin') return null;
+  return user.id;
+}
+
+// v9: доступен ли проект (projectId === null → «без проекта») данному auth.
+// Для сессий админа и токенов — всегда true; для member — только назначенные.
+function canAccessProject(auth, projectId) {
+  const memberUserId = sessionProjectFilter(auth);
+  if (memberUserId === null) return true;
+  if (projectId === null) return false; // null-project членам не виден
+  return !!db.prepare('SELECT 1 FROM project_access WHERE user_id = ? AND project_id = ?').get(memberUserId, projectId);
+}
 
 function getTask(id) {
   return db.prepare(`SELECT ${TASK_COLUMNS} FROM task WHERE id = ?`).get(id);
@@ -933,12 +1008,18 @@ function taskCustomValues(taskId) {
   return out;
 }
 
-function listTasks(req, res, params, searchParams) {
+function listTasks(req, res, params, searchParams, body, auth) {
   const projectParam = searchParams.get('project');
+  const memberUserId = sessionProjectFilter(auth);
   let rows;
   if (projectParam !== null) {
     if (projectParam === 'none') {
       // Вид «Без проекта»: задачи с project_id IS NULL.
+      // v9: member'ам задачи «без проекта» не видны (нет project-доступа).
+      if (memberUserId !== null) {
+        sendJson(res, 200, []);
+        return;
+      }
       rows = db.prepare(`SELECT ${TASK_COLUMNS} FROM task WHERE project_id IS NULL ORDER BY position, id`).all();
     } else {
       const pid = asId(projectParam);
@@ -950,8 +1031,21 @@ function listTasks(req, res, params, searchParams) {
         notFound(res, `Project ${pid} not found`);
         return;
       }
+      // v9: чужой для member проект → пусто (не палим существование 404-м только
+      // для единичного task — здесь список просто не должен содержать чужих задач).
+      if (memberUserId !== null && !canAccessProject(auth, pid)) {
+        sendJson(res, 200, []);
+        return;
+      }
       rows = db.prepare(`SELECT ${TASK_COLUMNS} FROM task WHERE project_id = ? ORDER BY position, id`).all(pid);
     }
+  } else if (memberUserId !== null) {
+    rows = db.prepare(`
+      SELECT ${TASK_COLUMNS} FROM task
+      WHERE project_id IS NOT NULL
+        AND project_id IN (SELECT project_id FROM project_access WHERE user_id = ?)
+      ORDER BY position, id
+    `).all(memberUserId);
   } else {
     rows = db.prepare(`SELECT ${TASK_COLUMNS} FROM task ORDER BY position, id`).all();
   }
@@ -1283,7 +1377,7 @@ function handleMePassword(req, res, params, query, body, auth) {
 }
 
 // GET /api/me — публичный: сообщает, требуется ли настройка, и кто вошёл.
-function handleMe(req, res) {
+function handleMe(req, res, params, query, body, auth) {
   if (isSetupMode()) {
     sendJson(res, 200, { setup_required: true, engine: DIALECT, setup_token_required: !!SETUP_TOKEN });
     return;
@@ -1293,10 +1387,11 @@ function handleMe(req, res) {
     sendJson(res, 401, { error: 'Unauthorized', setup_required: false });
     return;
   }
+  // v9: user содержит role (нужно фронту и проверкам доступа на клиенте).
   sendJson(res, 200, {
     setup_required: false,
     engine: DIALECT,
-    user: session.user,
+    user: session.user || (auth && auth.user) || null,
   });
 }
 
@@ -1397,13 +1492,36 @@ function validatePassword(password) {
 // Обработчики API (все ответы JSON; ошибки {error} + 400/404/500)
 // ---------------------------------------------------------------------------
 
-function listProjects(req, res, params, query) {
+// v9: id проектов, назначенных пользователю в project_access.
+function accessibleProjectIds(userId) {
+  return db.prepare('SELECT project_id FROM project_access WHERE user_id = ?').all(userId)
+    .map((r) => r.project_id);
+}
+
+function listProjects(req, res, params, query, body, auth) {
   // дефолт: только активные (archived=0); ?archived=1 → только архивные; ?archived=all → все
   const q = String(query && query.get ? query.get('archived') || '0' : '0');
   let where = '';
   if (q === '0' || q === '1') where = ' WHERE archived = ' + (q === '1' ? '1' : '0');
   else if (q !== 'all') where = ' WHERE archived = 0';
-  const rows = db.prepare('SELECT id, name, color, position, archived, created_at FROM project' + where + ' ORDER BY position, id').all();
+  // v9: member-сессия видит только назначенные ей проекты (project_access);
+  // админ-сессии и bearer-токены — все (токены не скоупятся — осознанно).
+  const memberUserId = sessionProjectFilter(auth);
+  let sql = 'SELECT id, name, color, position, archived, created_at FROM project';
+  const args = [];
+  if (memberUserId !== null) {
+    const parts = [];
+    if (where) {
+      parts.push(where.trim().replace(/^WHERE\s+/i, ''));
+    }
+    parts.push('id IN (SELECT project_id FROM project_access WHERE user_id = ?)');
+    args.push(memberUserId);
+    sql += ' WHERE ' + parts.join(' AND ');
+  } else {
+    sql += where;
+  }
+  sql += ' ORDER BY position, id';
+  const rows = db.prepare(sql).all(...args);
   sendJson(res, 200, rows);
 }
 
@@ -1498,20 +1616,98 @@ function deleteProject(req, res, params) {
   sendJson(res, 200, { ok: true, deleted: project.id });
 }
 
-function createTask(req, res, params, query, body) {
-  const out = createTaskCore(body);
-  sendJson(res, out.status, out.payload);
-}
-
-function patchTask(req, res, params, query, body) {
+// v9: GET /api/tasks/:id — доступ member'а к чужому проекту даёт 404.
+function getTaskHandler(req, res, params, query, body, auth) {
   const id = asId(params.id);
-  const out = patchTaskCore(id, body);
+  const task = id === null ? null : getTask(id);
+  if (!task || !canAccessProject(auth, task.project_id)) {
+    notFound(res, `Task ${params.id} not found`);
+    return;
+  }
+  sendJson(res, 200, { ...task, custom: taskCustomValues(task.id) });
+}
+
+// v9: доступ не-админов к проектам — GET/PUT /api/projects/:id/access.
+// Только admin-сессия (bearer-токенам отказ осознанно: у токенов нет роли).
+function requireAdminSession(req, res, auth) {
+  if (!auth || auth.via !== 'user' || !auth.user || auth.user.role !== 'admin') {
+    sendJson(res, 403, { error: 'Administrator role required' });
+    return false;
+  }
+  return true;
+}
+
+function getProjectAccess(req, res, params, query, body, auth) {
+  if (!requireAdminSession(req, res, auth)) return;
+  const id = asId(params.id);
+  if (id === null || !getProject(id)) {
+    notFound(res, `Project ${params.id} not found`);
+    return;
+  }
+  const user_ids = db.prepare('SELECT user_id FROM project_access WHERE project_id = ? ORDER BY user_id').all(id)
+    .map((r) => r.user_id);
+  sendJson(res, 200, { user_ids });
+}
+
+function putProjectAccess(req, res, params, query, body, auth) {
+  if (!requireAdminSession(req, res, auth)) return;
+  const id = asId(params.id);
+  if (id === null || !getProject(id)) {
+    notFound(res, `Project ${params.id} not found`);
+    return;
+  }
+  if (!Array.isArray(body.user_ids)) {
+    badRequest(res, 'Expected {"user_ids": [integer, ...]}');
+    return;
+  }
+  const ids = [];
+  for (const raw of body.user_ids) {
+    const uid = asId(raw);
+    if (uid === null) {
+      badRequest(res, 'Every entry in "user_ids" must be a user id');
+      return;
+    }
+    if (!ids.includes(uid)) ids.push(uid);
+  }
+  const placeholders = ids.map(() => '?').join(', ');
+  const existing = ids.length > 0
+    ? db.prepare(`SELECT id FROM ${USER_TABLE} WHERE id IN (${placeholders})`).all(...ids).map((r) => r.id)
+    : [];
+  const missing = ids.filter((uid) => !existing.includes(uid));
+  if (missing.length > 0) {
+    notFound(res, `User ${missing.join(', ')} not found`);
+    return;
+  }
+  // replace-set: одна транзакция — чистим старое, вставляем новое.
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM project_access WHERE project_id = ?').run(id);
+    const ins = db.prepare('INSERT INTO project_access (project_id, user_id) VALUES (?, ?)');
+    for (const uid of ids) ins.run(id, uid);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  const user_ids = db.prepare('SELECT user_id FROM project_access WHERE project_id = ? ORDER BY user_id').all(id)
+    .map((r) => r.user_id);
+  sendJson(res, 200, { user_ids });
+}
+
+function createTask(req, res, params, query, body, auth) {
+  const out = createTaskCore(body, auth);
   sendJson(res, out.status, out.payload);
 }
 
-function deleteTask(req, res, params) {
+function patchTask(req, res, params, query, body, auth) {
+  const id = asId(params.id);
+  const out = patchTaskCore(id, body, auth);
+  sendJson(res, out.status, out.payload);
+}
+
+function deleteTask(req, res, params, query, body, auth) {
   const id = params.id;
-  const out = deleteTaskCore(id);
+  const out = deleteTaskCore(id, auth);
   sendJson(res, out.status, out.payload);
 }
 
@@ -1519,9 +1715,9 @@ function deleteTask(req, res, params) {
 //   after_id = X  → карточка встаёт сразу ПОСЛЕ X: position = midpoint(X, следующий за X)
 //   before_id = X → карточка встаёт сразу ПЕРЕД X: position = midpoint(предыдущий, X)
 //   без соседей   → в конец колонки: position = max+1 (1, если колонка пуста)
-function moveTask(req, res, params, query, body) {
+function moveTask(req, res, params, query, body, auth) {
   const id = asId(params.id);
-  const out = moveTaskCore(id, body);
+  const out = moveTaskCore(id, body, auth);
   sendJson(res, out.status, out.payload);
 }
 
@@ -2044,7 +2240,25 @@ function exportAll(req, res) {
 // Валидация одна — расхождений между API и MCP нет.
 // ---------------------------------------------------------------------------
 
-function createTaskCore(body) {
+// v9: срочность 'h' | 'm' | 'l' (регистр не важен), пусто/undefined/null = NULL.
+const URGENCY_VALUES = ['h', 'm', 'l'];
+function normalizeUrgency(body, fieldLabel = 'urgency') {
+  const v = body.urgency;
+  if (v === undefined || v === null) return { value: null, valid: true };
+  if (typeof v !== 'string') {
+    return { value: null, valid: false, error: `Field "${fieldLabel}" must be a string or null (h/m/l)` };
+  }
+  const low = v.trim().toLowerCase();
+  if (low === '') return { value: null, valid: true };
+  if (URGENCY_VALUES.includes(low)) return { value: low, valid: true };
+  return {
+    value: null,
+    valid: false,
+    error: `Invalid urgency "${v}". Allowed: h, m, l (case-insensitive) or empty/null`,
+  };
+}
+
+function createTaskCore(body, auth = null) {
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   if (!title) return { status: 400, payload: { error: 'Field "title" is required' } };
   if (title.length > 500) return { status: 400, payload: { error: 'Field "title" is too long (max 500)' } };
@@ -2058,13 +2272,21 @@ function createTaskCore(body) {
   let projectId;
   if (body.project_id === undefined || body.project_id === null || body.project_id === '') {
     // v7: «без проекта» — осмысленное состояние, а не «первый попавшийся проект».
+    // v9: member-сессии «без проекта» создавать нельзя (такие задачи им не видны).
+    if (!canAccessProject(auth, null)) {
+      return { status: 403, payload: { error: 'Нет доступа к проекту' } };
+    }
     projectId = null;
   } else if (body.project_id === 'none') {
+    if (!canAccessProject(auth, null)) {
+      return { status: 403, payload: { error: 'Нет доступа к проекту' } };
+    }
     projectId = null;
   } else {
     const pid = asId(body.project_id);
     if (pid === null) return { status: 400, payload: { error: 'Field "project_id" must be a project id, "none", or null' } };
     if (!getProject(pid)) return { status: 404, payload: { error: `Project ${pid} not found` } };
+    if (!canAccessProject(auth, pid)) return { status: 403, payload: { error: 'Нет доступа к проекту' } };
     projectId = pid;
   }
   const optional = {};
@@ -2089,17 +2311,24 @@ function createTaskCore(body) {
     if (!m) return { status: 404, payload: { error: `Assignee "${body.assignee.trim()}" not found` } };
     assigneeId = m.id;
   }
+  const urgency = normalizeUrgency(body);
+  if (!urgency.valid) return { status: 400, payload: { error: urgency.error } };
   const ts = nowIso();
   // maxTaskPosition принимает NULL (IS ?) — «без проекта» своя очередь позиций.
   const position = maxTaskPosition(projectId, stage) + 1; // дефолт: max+1 в колонке
-  const info = db.prepare('INSERT INTO task (project_id, title, stage, position, due_at, assignee_id, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(projectId, title, stage, position, optional.due_at, assigneeId, optional.notes, ts, ts);
+  const info = db.prepare('INSERT INTO task (project_id, title, stage, position, due_at, assignee_id, notes, urgency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(projectId, title, stage, position, optional.due_at, assigneeId, optional.notes, urgency.value, ts, ts);
   return { status: 200, payload: { ...getTask(Number(info.lastInsertRowid)), custom: {} } };
 }
 
-function patchTaskCore(id, body) {
+function patchTaskCore(id, body, auth = null) {
   const task = id === null ? null : getTask(id);
   if (!task) return { status: 404, payload: { error: `Task ${id} not found` } };
+  // v9: задача в чужом для member проекте → 404 (не палим существование);
+  // текущий null-project для member тоже «не существует».
+  if (!canAccessProject(auth, task.project_id)) {
+    return { status: 404, payload: { error: `Task ${id} not found` } };
+  }
   const sets = {};
   if (body.title !== undefined) {
     if (typeof body.title !== 'string' || !body.title.trim()) return { status: 400, payload: { error: 'Field "title" must be a non-empty string' } };
@@ -2112,11 +2341,17 @@ function patchTaskCore(id, body) {
   // Перенос между проектами: project_id (id | 'none' | null) или project (имя).
   if (body.project_id !== undefined) {
     if (body.project_id === null || body.project_id === '' || body.project_id === 'none') {
+      // v9: member — целевой проект «без проекта» недоступен.
+      if (!canAccessProject(auth, null)) {
+        return { status: 403, payload: { error: 'Нет доступа к проекту' } };
+      }
       sets.project_id = null;
     } else {
       const pid = asId(body.project_id);
       if (pid === null) return { status: 400, payload: { error: 'Field "project_id" must be a project id, "none", or null' } };
       if (!getProject(pid)) return { status: 404, payload: { error: `Project ${pid} not found` } };
+      // v9: ЦЕЛЕВОЙ проект должен быть в доступе member'а.
+      if (!canAccessProject(auth, pid)) return { status: 403, payload: { error: 'Нет доступа к проекту' } };
       sets.project_id = pid;
     }
   }
@@ -2157,6 +2392,12 @@ function patchTaskCore(id, body) {
   }
   if (assigneeTouched) sets.assignee_id = assigneeId;
 
+  if (body.urgency !== undefined) {
+    const u = normalizeUrgency(body);
+    if (!u.valid) return { status: 400, payload: { error: u.error } };
+    sets.urgency = u.value;
+  }
+
   // Custom-поля: ключи "custom:<field_id>" → значение с валидацией по типу.
   const customSets = {};
   for (const [key, value] of Object.entries(body)) {
@@ -2172,7 +2413,7 @@ function patchTaskCore(id, body) {
 
   const keys = Object.keys(sets);
   if (keys.length === 0 && Object.keys(customSets).length === 0) {
-    return { status: 400, payload: { error: 'Nothing to update (title, stage, position, project_id, due_at, assignee_id/assignee, notes, custom:<id>)' } };
+    return { status: 400, payload: { error: 'Nothing to update (title, stage, position, project_id, urgency, due_at, assignee_id/assignee, notes, custom:<id>)' } };
   }
   db.exec('BEGIN');
   try {
@@ -2199,9 +2440,13 @@ function patchTaskCore(id, body) {
   return { status: 200, payload: { ...getTask(task.id), custom: taskCustomValues(task.id) } };
 }
 
-function moveTaskCore(id, body) {
+function moveTaskCore(id, body, auth = null) {
   const task = id === null ? null : getTask(id);
   if (!task) return { status: 404, payload: { error: `Task ${id} not found` } };
+  // v9: перенос из чужого проекта → 404 (не палим существование).
+  if (!canAccessProject(auth, task.project_id)) {
+    return { status: 404, payload: { error: `Task ${id} not found` } };
+  }
   if (body.stage === undefined) return { status: 400, payload: { error: 'Field "stage" is required' } };
   if (!validStage(body.stage)) return { status: 400, payload: { error: `Invalid stage "${String(body.stage)}". Allowed: ${listStageRows().map((s) => s.id).join(', ')}` } };
 
@@ -2209,11 +2454,17 @@ function moveTaskCore(id, body) {
   let projectId = task.project_id;
   if (body.project_id !== undefined) {
     if (body.project_id === null || body.project_id === '' || body.project_id === 'none') {
+      // v9: member — целевой проект «без проекта» недоступен.
+      if (!canAccessProject(auth, null)) {
+        return { status: 403, payload: { error: 'Нет доступа к проекту' } };
+      }
       projectId = null;
     } else {
       const pid = asId(body.project_id);
       if (pid === null) return { status: 400, payload: { error: 'Field "project_id" must be a project id, "none", or null' } };
       if (!getProject(pid)) return { status: 404, payload: { error: `Project ${pid} not found` } };
+      // v9: ЦЕЛЕВОЙ проект должен быть в доступе member'а.
+      if (!canAccessProject(auth, pid)) return { status: 403, payload: { error: 'Нет доступа к проекту' } };
       projectId = pid;
     }
   }
@@ -2258,10 +2509,14 @@ function moveTaskCore(id, body) {
   return { status: 200, payload: getTask(task.id) };
 }
 
-function deleteTaskCore(id) {
+function deleteTaskCore(id, auth = null) {
   const tid = asId(id);
   const task = tid === null ? null : getTask(tid);
   if (!task) return { status: 404, payload: { error: `Task ${id} not found` } };
+  // v9: чужой для member проект → 404 (не палим существование).
+  if (!canAccessProject(auth, task.project_id)) {
+    return { status: 404, payload: { error: `Task ${id} not found` } };
+  }
   db.prepare('DELETE FROM task WHERE id = ?').run(task.id);
   return { status: 200, payload: { ok: true, deleted: task.id } };
 }
@@ -2272,6 +2527,8 @@ function deleteTaskCore(id) {
 // ---------------------------------------------------------------------------
 
 // Вспомогательный svc-слой — те же данные, что у REST, но без req/res.
+// Токены (MCP) не скоупятся по project_access — осознанное поведение (user_id
+// у токена нет); все svc-вызовы идут от имени токена.
 const svc = {
   listProjects: () => db.prepare('SELECT id, name, color, position, archived, created_at FROM project ORDER BY position, id').all(),
   getProject: (id) => getProject(id),
@@ -2417,7 +2674,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'kanban_create_task',
-    description: 'Create a task {title (required), project_id? (id or "none" = no project; defaults to no project), stage?, due_at?, notes?, assignee_id?, assignee?}. Returns the created task.',
+    description: 'Create a task {title (required), project_id? (id or "none" = no project; defaults to no project), stage?, due_at?, notes?, assignee_id?, assignee?, urgency?}. Returns the created task.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2428,6 +2685,11 @@ const MCP_TOOLS = [
         notes: { type: 'string', description: 'markdown' },
         assignee_id: { type: ['integer', 'string'] },
         assignee: { type: 'string', description: 'assignee name' },
+        urgency: {
+          type: ['string', 'null'],
+          enum: ['h', 'm', 'l', null],
+          description: 'urgency: "h"=high, "m"=medium, "l"=low (case-insensitive on input, stored lowercase); null/empty = no urgency',
+        },
       },
       required: ['title'],
     },
@@ -2435,7 +2697,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'kanban_update_task',
-    description: 'Update a task {id (required), title?, stage?, project_id? (id or "none"), due_at?, notes?, assignee_id?, assignee?, custom:<field_id>?: value}. For custom NUMBER pass a number or numeric string; CHECKBOX — true/false; empty string/null clears the value. Returns the updated task.',
+    description: 'Update a task {id (required), title?, stage?, project_id? (id or "none"), urgency? ("h"/"m"/"l", null clears), due_at?, notes?, assignee_id?, assignee?, custom:<field_id>?: value}. For custom NUMBER pass a number or numeric string; CHECKBOX — true/false; empty string/null clears the value. Returns the updated task.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2447,6 +2709,11 @@ const MCP_TOOLS = [
         notes: { type: 'string' },
         assignee_id: { type: ['integer', 'string'] },
         assignee: { type: 'string' },
+        urgency: {
+          type: ['string', 'null'],
+          enum: ['h', 'm', 'l', null],
+          description: 'urgency: "h"=high, "m"=medium, "l"=low (case-insensitive on input, stored lowercase); null/empty = no urgency',
+        },
       },
       required: ['id'],
     },
@@ -2646,9 +2913,15 @@ const routes = [
   { method: 'POST',   re: /^\/api\/projects\/?$/,                       handler: createProject },
   { method: 'PATCH',  re: /^\/api\/projects\/(?<id>[0-9]+)\/?$/,        handler: patchProject },
   { method: 'DELETE', re: /^\/api\/projects\/(?<id>[0-9]+)\/?$/,        handler: deleteProject },
+  // v9: доступ не-админов к проекту — заменяемый набор user_ids (только admin-сессия).
+  { method: 'GET',    re: /^\/api\/projects\/(?<id>[0-9]+)\/access\/?$/, handler: getProjectAccess },
+  { method: 'PUT',    re: /^\/api\/projects\/(?<id>[0-9]+)\/access\/?$/, handler: putProjectAccess },
   { method: 'GET',    re: /^\/api\/tasks\/?$/,                          handler: listTasks },
   { method: 'POST',   re: /^\/api\/tasks\/?$/,                          handler: createTask },
   { method: 'PATCH',  re: /^\/api\/tasks\/(?<id>[0-9]+)\/?$/,           handler: patchTask },
+  // v9: GET /api/tasks/:id — member'у чужой проект → 404 (не палим существование).
+  // (svc.getTask для MCP ходит от токенов — там скоупинг не применяется.)
+  { method: 'GET',    re: /^\/api\/tasks\/(?<id>[0-9]+)\/?$/,             handler: getTaskHandler },
   { method: 'DELETE', re: /^\/api\/tasks\/(?<id>[0-9]+)\/?$/,           handler: deleteTask },
   { method: 'POST',   re: /^\/api\/tasks\/(?<id>[0-9]+)\/move\/?$/,     handler: moveTask },
   { method: 'GET',    re: /^\/api\/stages\/?$/,                          handler: listStages },
@@ -2682,6 +2955,10 @@ const ADMIN_ONLY_ROUTES = [
   /^\/api\/audit\/?$/,
   /^\/api\/sessions/,
   /^\/api\/export\/?$/,
+  // v9: управление доступом к проектам — в дополнение к isAdminRoute-проверке
+  // роли в handleApi requireAdminSession дублирует её внутри обработчиков
+  // (bearer-токенам отказ ещё раньше — на гейте admin-роутов).
+  /^\/api\/projects\/[0-9]+\/access/,
 ];
 
 function isAdminRoute(pathname) {
@@ -2767,7 +3044,8 @@ async function handleApi(req, res, pathname, searchParams) {
     if (!match) continue;
     let params = match.groups || {};
     let body = {};
-    if (req.method === 'POST' || req.method === 'PATCH') {
+    // v9: PUT тоже мутация с телом (например, /api/projects/:id/access).
+    if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT') {
       try {
         body = await readJsonBody(req);
       } catch (err) {

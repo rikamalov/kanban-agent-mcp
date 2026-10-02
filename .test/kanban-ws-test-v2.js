@@ -114,7 +114,7 @@ function defaultRows() {
 }
 
 const w = window;
-w.eval(appSrc + '\n;window.__test = { state, renderBody, boot, renderApp, renderSidebar, openAgentsPanel, closeAgentsPanel, renderAgentsModal };');
+w.eval(appSrc + '\n;window.__test = { state, renderBody, boot, renderApp, renderSidebar, openAgentsPanel, closeAgentsPanel, renderAgentsModal, applyTheme, openTaskModal, renderTable, sortedTableTasks, renderCalendar };');
 
 let passed = 0, failed = 0;
 function ok(cond, name) {
@@ -345,6 +345,317 @@ function ok(cond, name) {
     ok(document.querySelector('#nt-value') === null, 'без state.newToken полное значение не рисуется');
   }
   w.__test.closeAgentsPanel();
+
+  /* ==================== v9: urgency + project_access + theme + DOM-порядок ==================== */
+
+  /* --- Дополнительные моки к существующему fetch-роутеру --- */
+  const accessRequests = []; // журнал /access
+  const usersSeed = [
+    { id: 101, username: 'anna', display_name: 'Аня', role: 'member' },
+    { id: 102, username: 'boris', display_name: 'Борис', role: 'member' },
+    { id: 103, username: 'admin', display_name: 'Админ', role: 'admin' },
+  ];
+  data.users = usersSeed;
+  data.access = { 1: { user_ids: [101, 103] } }; // проект 1 уже делится с anna
+  const prevFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const method = (opts && opts.method) || 'GET';
+    const resp = (status, body) => ({ ok: status < 400, status, json: async () => body });
+    if (u === '/api/users' && method === 'GET') return resp(200, { users: data.users });
+    if (u === '/api/users' && method === 'POST') { const b = JSON.parse(opts.body); return resp(200, { id: 900, username: b.username, role: b.role }); }
+    if (u.startsWith('/api/users/') && method === 'PATCH') return resp(200, {});
+    if (u.startsWith('/api/users/') && method === 'DELETE') return resp(200, {});
+    if (u.startsWith('/api/projects/') && u.endsWith('/access')) {
+      const pid = Number(u.split('/')[3]);
+      if (method === 'GET') return resp(200, data.access[pid] || { user_ids: [] });
+      if (method === 'PUT') {
+        const b = JSON.parse(opts.body);
+        data.access[pid] = { user_ids: [...b.user_ids] };
+        accessRequests.push({ u, body: b });
+        return resp(200, {});
+      }
+    }
+    return prevFetch(url, opts);
+  };
+  ok(data.users.length === 3, 'v9: моки /api/users и /access добавлены');
+
+  /* --- Общие хелперы v9 --- */
+  const v9t = (id) => w.__test.state.tasks.find((t) => String(t.id) === String(id));
+  // «reload»: state.tasks ссылаются на те же объекты, что и data.tasks, boot() не нужен
+  const v9reload = () => w.__test.renderApp();
+  // Кнопки и карточки кликаем через JS API: MouseEvent не реализует composed path для closest()
+  const jsClick = (elm) => { if (!elm) throw new Error('jsClick: element not found'); elm.click(); };
+  // Убеждаемся, что язык ru для проверок локали
+  w.__test.state.lang = 'ru';
+
+  /* ============ 1. УРГЕНТНОСТЬ ============ */
+  w.__test.state.view = { type: 'all' };
+
+  // Мок-задачи с ургентностью
+  w.__test.state.tasks.push(mkTask(70, { stage: 'DISCUSSION', urgency: 'h' }));
+  w.__test.state.tasks.push(mkTask(71, { stage: 'DISCUSSION', urgency: 'm' }));
+  w.__test.state.tasks.push(mkTask(72, { stage: 'DISCUSSION', urgency: 'l' }));
+  w.__test.state.tasks.push(mkTask(73, { stage: 'DISCUSSION', urgency: null }));
+  w.__test.renderApp();
+
+  const cardH = document.querySelector('.card[data-id="70"]');
+  ok(!!cardH, 'v9: карточка urgency=h создана в DOM');
+  ok(cardH.querySelector('.urg-square.urg-h') !== null, 'v9: канбан-карточка urgency=h содержит .urg-square.urg-h');
+  const sqH = cardH.querySelector('.urg-square');
+  ok(sqH && sqH.title.includes('Срочность'), 'v9: тултип квадратика содержит «Срочность»');
+  ok(sqH && sqH.title.includes('Высокая'), 'v9: тултип квадратика содержит «Высокая»');
+  ok(document.querySelector('.card[data-id="73"] .urg-square') === null, 'v9: задача без urgency — квадратика нет на канбан-карточке');
+
+  /* Таблица: title-ячейка + колонка «Срочность» */
+  w.__test.state.viewType = 'TABLE';
+  w.__test.state.tableSort = { key: null, dir: 'asc' };
+  v9reload();
+  const titleTdH = document.querySelector('#ws-tasks tbody tr[data-id="70"] td.td-title');
+  ok(!!titleTdH, 'v9: строка таблицы urgency=h отрисована');
+  ok(titleTdH.querySelector('.urg-square.urg-h') !== null, 'v9: title-ячейка таблицы содержит квадратик urg-h');
+
+  // Включаем поле urgency в TABLE через state.viewFields (GET-мок сидирует дефолтные 6 полей)
+  ok(w.__test.state.viewFields.TABLE.some((r) => r.field_key === 'urgency'), 'v9: SYSTEM_KEYS дотянул urgency в TABLE-поля автоматически');
+  const vfT = w.__test.state.viewFields.TABLE.find((r) => r.field_key === 'urgency');
+  vfT.is_visible = true;
+  v9reload();
+  const urgTh = [...document.querySelectorAll('#ws-tasks thead th')].find((th) => th.dataset.k === 'urgency');
+  ok(!!urgTh, 'v9: колонка «Срочность» появилась в TABLE');
+  const urgTdH = document.querySelector('#ws-tasks tbody tr[data-id="70"] td .urg-square.urg-h');
+  ok(!!urgTdH, 'v9: в колонке «Срочность» квадратик urg-h');
+
+  // квадратика не должно быть ни в одной ячейке urgency-колонки у null-задачи
+  const urgTd73 = document.querySelector('#ws-tasks tbody tr[data-id="73"] td .urg-square');
+  ok(urgTd73 === null, 'v9: null-urgency — квадратика нет в колонке таблицы');
+
+  /* Календарь: urgency=m на карточке */
+  w.__test.state.viewType = 'CALENDAR';
+  v9reload();
+  const calM = document.querySelector('#ws-calendar .cal-card[data-id="71"]');
+  ok(!!calM, 'v9: календарная карточка urgency=m отрисована');
+  ok(calM.querySelector('.urg-square.urg-m') !== null, 'v9: календарная карточка содержит .urg-square.urg-m');
+  ok(document.querySelector('#ws-calendar .cal-card[data-id="73"] .urg-square') === null, 'v9: null-urgency в календаре без квадратика');
+
+  /* ============ 2. СОРТИРОВКА ============ */
+  w.__test.state.viewType = 'TABLE';
+  w.__test.state.tableSort = { key: 'urgency', dir: 'desc' };
+  v9reload();
+  const bodyRows = [...document.querySelectorAll('#ws-tasks tbody tr[data-id]')];
+  ok(bodyRows.length >= 16, 'v9: в таблице достаточно строк для сортировки');
+  /* При desc первая строка — null-urgency (значение 3 — максимум, уходит наверх при убывании);
+     квадратика у неё нет — это и проверяем + отдельный asc-блок ниже даёт h→m→l→null. */
+  const firstUrgTd = bodyRows[0].querySelector('td .urg-square');
+  ok(firstUrgTd === null, 'v9: первая строка после сортировки urgency desc — без квадратика (null-urgency наверху)');
+  const urgOrder = bodyRows.map((r) => {
+    const sq = r.querySelector('td .urg-square');
+    if (!sq) return 'null';
+    if (sq.className.includes('urg-h')) return 'h';
+    if (sq.className.includes('urg-m')) return 'm';
+    if (sq.className.includes('urg-l')) return 'l';
+    return '?';
+  });
+  /* Фактическая семантика app.js: sortValue urgency {h:0,m:1,l:2,null:3};
+     desc (по убыванию числа) → null,l,m,h; asc → h,m,l,null («наивысшая срочность наверху»). */
+  ok(urgOrder.indexOf('h') === urgOrder.lastIndexOf('h') && urgOrder.indexOf('h') === urgOrder.length - 1, 'v9: сортировка desc — h последняя (обратная семантика sortValue)');
+  ok(urgOrder.indexOf('null') === 0, 'v9: сортировка desc — null первые');
+  ok(urgOrder.indexOf('l') < urgOrder.indexOf('m') && urgOrder.indexOf('m') < urgOrder.lastIndexOf('h'), 'v9: сортировка desc — порядок null→l→m→h');
+  // asc (первый клик по th или key с asc): h→m→l→null
+  w.__test.state.tableSort = { key: 'urgency', dir: 'asc' };
+  v9reload();
+  const ascRows = [...document.querySelectorAll('#ws-tasks tbody tr[data-id]')];
+  const ascOrder = ascRows.map((r) => {
+    const sq = r.querySelector('td .urg-square');
+    if (!sq) return 'null';
+    if (sq.className.includes('urg-h')) return 'h';
+    if (sq.className.includes('urg-m')) return 'm';
+    if (sq.className.includes('urg-l')) return 'l';
+    return 'null';
+  });
+  ok(ascOrder.indexOf('h') === 0, 'v9: сортировка asc — h первая строка');
+  ok(ascOrder.indexOf('m') < ascOrder.indexOf('l'), 'v9: сортировка asc — m раньше l');
+  ok(ascOrder.lastIndexOf('null') === ascOrder.length - 1, 'v9: сортировка asc — null последняя');
+  w.__test.state.tableSort = { key: null, dir: 'asc' };
+
+  /* ============ 3. МОДАЛКА ============ */
+  const urg71 = v9t(71);
+  ok(urg71 && urg71.urgency === 'm', 'v9: задача 71 имеет urgency=m в state');
+
+  w.__test.state.viewType = 'KANBAN';
+  v9reload();
+  jsClick(document.querySelector('.card[data-id="71"]'));
+  await new Promise((r) => setTimeout(r, 30));
+  const mfUrg = document.querySelector('#mf-urgency');
+  ok(!!mfUrg, 'v9: модалка содержит #mf-urgency');
+  ok(mfUrg && mfUrg.value === 'm', 'v9: openTaskModal(m) → #mf-urgency.value=m');
+  mfUrg.value = 'l';
+  requests.length = 0;
+  jsClick(document.querySelector('#mf-save'));
+  await new Promise((r) => setTimeout(r, 30));
+  const urgPatch = requests.find((r) => r.method === 'PATCH' && r.u.includes('/api/tasks/71'));
+  ok(!!urgPatch, 'v9: PATCH задачи 71 отправлен');
+  ok(!!urgPatch && urgPatch.body.urgency === 'l', 'v9: PATCH body urgency=l');
+  ok(!!urgPatch && v9t(71).urgency === 'l', 'v9: mock применил urgency=l к задаче');
+
+  // пустой (—) → null
+  jsClick(document.querySelector('.card[data-id="71"]'));
+  await new Promise((r) => setTimeout(r, 30));
+  const mfUrg2 = document.querySelector('#mf-urgency');
+  ok(mfUrg2 && mfUrg2.value === 'l', 'v9: повторное открытие модалки — urgency=l');
+  mfUrg2.value = ''; // (—)
+  requests.length = 0;
+  jsClick(document.querySelector('#mf-save'));
+  await new Promise((r) => setTimeout(r, 30));
+  const urgNullPatch = requests.find((r) => r.method === 'PATCH' && r.u.includes('/api/tasks/71'));
+  ok(!!urgNullPatch && urgNullPatch.body.urgency === null, 'v9: PATCH body urgency=null (пустой селект)');
+
+  /* ============ 4. ДОСТУП (dots-меню) ============ */
+  w.__test.state.me = { id: 103, username: 'admin', display_name: 'Админ', role: 'admin' };
+  v9reload();
+  const moreBtnV9 = document.querySelector('.project-row[data-view="1"] .project-more');
+  ok(!!moreBtnV9, 'v9: dots-кнопка проекта отрисована');
+  jsClick(moreBtnV9);
+  const ctxAdmin = document.querySelector('.ctx-menu');
+  ok(!!ctxAdmin, 'v9: dots-меню открылось (admin)');
+  ok(ctxAdmin && [...ctxAdmin.querySelectorAll('.ctx-item')].some((b) => b.textContent.includes('Доступ')), 'v9: dots-меню содержит «Доступ»');
+  // Клик «Доступ» → модалка с чекбоксами
+  const accItem = [...ctxAdmin.querySelectorAll('.ctx-item')].find((b) => b.textContent.includes('Доступ'));
+  jsClick(accItem);
+  await new Promise((r) => setTimeout(r, 30));
+  const accModal = document.querySelector('#access-modal');
+  ok(!!accModal, 'v9: модалка доступа открылась');
+  ok(document.querySelectorAll('#access-modal .acc-check').length === 3, 'v9: 3 чекбокса пользователей');
+  const chkAnna = document.querySelector('#access-modal .acc-check[data-uid="101"]');
+  const chkBoris = document.querySelector('#access-modal .acc-check[data-uid="102"]');
+  ok(chkAnna && chkAnna.checked, 'v9: чекбокс anna предзаполнен из GET /access');
+  ok(chkBoris && !chkBoris.checked, 'v9: чекбокс boris не отмечен');
+  // Отмечаем boris, сохраняем
+  chkBoris.checked = true;
+  jsClick(document.querySelector('#access-save'));
+  await new Promise((r) => setTimeout(r, 30));
+  const putReq = accessRequests.find((r) => r.u.endsWith('/access'));
+  ok(!!putReq, 'v9: PUT /api/projects/1/access отправлен');
+  ok(!!putReq && JSON.stringify(putReq.body.user_ids.slice().sort()) === JSON.stringify([101, 102, 103].map(String).sort()), 'v9: PUT body {user_ids:[…]} правильный');
+  ok([...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('обновлён')), 'v9: тост access.saved показан');
+  ok(document.querySelector('#access-modal') === null, 'v9: модалка доступа закрылась после сохранения');
+
+  // member: пункта «Доступ» нет
+  w.__test.state.me = { id: 101, username: 'anna', display_name: 'Аня', role: 'member' };
+  v9reload();
+  jsClick(document.querySelector('.project-row[data-view="1"] .project-more'));
+  const ctxMember = document.querySelector('.ctx-menu');
+  ok(!!ctxMember, 'v9: dots-меню открылось (member)');
+  ok(ctxMember && ![...ctxMember.querySelectorAll('.ctx-item')].some((b) => b.textContent.includes('Доступ')), 'v9: у member нет пункта «Доступ»');
+  w.__test.state.me = { id: 103, username: 'admin', display_name: 'Админ', role: 'admin' };
+
+  /* ============ 5. ТЕМА ============ */
+  /* In-realm state читал kanban.theme при IIFE-инициализации app.js (там localStorage
+     существует только с запуском node --localstorage-file=…). Хранилище в realm: */
+  const realmSet = (k, v) => w.eval('localStorage.setItem(' + JSON.stringify(k) + ',' + JSON.stringify(v) + ')');
+  const realmGet = (k) => w.eval('(function(){ try { return localStorage.getItem(' + JSON.stringify(k) + '); } catch (e) { return null; } })()');
+
+  w.__test.renderSidebar();
+  jsClick(document.querySelector('#settings-btn'));
+  const themePop = document.querySelector('#settings-pop');
+  ok(!!themePop, 'v9: попап настроек открылся');
+  ok(themePop.querySelectorAll('.ssp-theme-btn').length === 3, 'v9: 3 кнопки темы (system/light/dark)');
+  // dark
+  jsClick(themePop.querySelector('.ssp-theme-btn[data-theme="dark"]'));
+  ok(document.documentElement.dataset.theme === 'dark', 'v9: клик dark → dataset.theme=dark');
+  ok(realmGet('kanban.theme') === 'dark', 'v9: клик dark → kanban.theme=dark (в realm-хранилище)');
+
+  /* reload-имитация: как при старте делает IIFE state.theme — читаю LS и применяю */
+  w.eval('__test.state.theme = (function(){ try { var th = localStorage.getItem("kanban.theme"); return (th === "dark" || th === "light" || th === "system") ? th : "system"; } catch (_) { return "system"; } })();');
+  ok(w.eval('__test.state.theme') === 'dark', 'v9: reload-инициализация state.theme=dark из localStorage');
+  // light
+  jsClick(document.querySelector('.ssp-theme-btn[data-theme="light"]'));
+  ok(document.documentElement.dataset.theme !== 'dark', 'v9: клик light → dataset.theme<>dark');
+  ok(realmGet('kanban.theme') === 'light', 'v9: клик light → kanban.theme=light');
+
+  /* ============ 5b. Система dark/light через matchMedia ============ */
+  // jsdom не реализует matchMedia — замокать (нужен и внутри realm, где его нет совсем)
+  const mqState = { matches: false }; // системная тёмная?
+  w.matchMedia = (q) => ({
+    media: q,
+    matches: q === '(prefers-color-scheme: dark)' ? mqState.matches : false,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    onchange: null,
+    dispatchEvent() { return false; },
+  });
+  // applyTheme смотрит window.matchMedia — в realm window это наш же замоканный объект
+  w.eval('__test.state.theme = "system";');
+  jsClick(document.querySelector('#settings-btn')); // переоткрыть попап (state.theme сменился вне кликов)
+  w.eval('__test.applyTheme();');
+  ok(w.eval('document.documentElement.dataset.theme') === '', 'v9: system + светлая ОС → dataset.theme пуст');
+  mqState.matches = true; // «пользователь включил тёмную тему ОС»
+  w.eval('__test.applyTheme();');
+  ok(w.eval('document.documentElement.dataset.theme') === 'dark', 'v9: system + тёмная ОС → dataset.theme=dark');
+  mqState.matches = false;
+  w.eval('__test.state.theme = "dark"; __test.applyTheme();');
+  ok(document.documentElement.dataset.theme === 'dark', 'v9: theme=dark восстановлен после системных переключений');
+  ok(realmGet('kanban.theme') === 'light', 'v9: kanban.theme в LS не перезаписался системными переключениями');
+
+  /* ============ 6. НОВЫЙ-НАВЕРХ ============ */
+  w.__test.state.viewType = 'KANBAN';
+  w.__test.renderApp();
+  const col1 = document.querySelector('#board .col');
+  const orderOk = col1
+    && col1.querySelector('.col-head') !== null
+    && col1.querySelector('.col-foot') !== null
+    && col1.querySelector('.col-cards') !== null
+    && col1.querySelector('.col-foot').nextElementSibling === col1.querySelector('.col-cards')
+    && col1.querySelector('.col-head').nextElementSibling === col1.querySelector('.col-foot');
+  ok(orderOk, 'v9: в колонке порядок col-head → col-foot → col-cards');
+  // col-foot выше всех карточек той же колонки
+  const firstCardInCol = col1.querySelector('.col-cards .card');
+  ok(!firstCardInCol || (firstCardInCol.compareDocumentPosition(col1.querySelector('.col-foot')) & 2) !== 0, 'v9: col-foot выше карточек (новая кнопка над списком)');
+
+  w.__test.state.viewType = 'TABLE';
+  w.__test.state.tableSort = { key: null, dir: 'asc' };
+  w.__test.renderApp();
+  const tableHeadRow = document.querySelector('#table-head-row');
+  const tableGrid = document.querySelector('#ws-tasks table.grid');
+  ok(!!tableHeadRow && !!tableGrid, 'v9: table-head-row и table.grid существуют');
+  ok(tableHeadRow.querySelector('#table-add-btn') !== null, 'v9: #table-add-btn внутри #table-head-row');
+  ok((tableHeadRow.compareDocumentPosition(tableGrid) & 4) !== 0, 'v9: table-add-btn (head) раньше <table> в DOM');
+
+  /* ============ 7. NODUE ============ */
+  w.__test.state.viewType = 'CALENDAR';
+  realmSet('kanban.calNoDueCollapsed', '0');
+  w.__test.state.calNoDueCollapsed = false;
+  w.__test.renderApp();
+  const nodueBlock = document.querySelector('#ws-calendar .cal-nodue');
+  ok(!!nodueBlock, 'v9: блок «Без срока» в календаре');
+  const nodueToggle = document.querySelector('#cal-nodue-toggle');
+  ok(!!nodueToggle, 'v9: #cal-nodue-toggle есть');
+  ok(document.querySelectorAll('#ws-calendar .cal-nodue .cal-card').length >= 2, 'v9: карточки без срока видны (не свёрнуто)');
+  // клик (in-realm, реальный event-путь) → collapse
+  w.eval('document.querySelector("#cal-nodue-toggle").click()');
+  await new Promise((r) => setTimeout(r, 20));
+  const nodueAfter = document.querySelector('#ws-calendar .cal-nodue');
+  ok(nodueAfter.classList.contains('collapsed'), 'v9: клик по тогглу свернул .cal-nodue.collapsed');
+  ok(nodueAfter.querySelector('.cal-nodue-cards') !== null, 'v9: контейнер карточек на месте в свёрнутом блоке');
+  // скрытие делает CSS-правило (.cal-nodue.collapsed .cal-nodue-cards { display: none; }) — сверяемся со style.css
+  const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  ok(/\.cal-nodue\.collapsed \.cal-nodue-cards\s*\{\s*display:\s*none;/.test(cssSrc), 'v9: css .cal-nodue.collapsed скрывает .cal-nodue-cards (display:none)');
+  ok(realmGet('kanban.calNoDueCollapsed') === '1', 'v9: localStorage kanban.calNoDueCollapsed=1 после клика');
+  ok(w.__test.state.calNoDueCollapsed === true, 'v9: state.calNoDueCollapsed=true');
+  // повторный клик → раскрыто
+  w.eval('document.querySelector("#cal-nodue-toggle").click()');
+  await new Promise((r) => setTimeout(r, 20));
+  ok(!document.querySelector('#ws-calendar .cal-nodue').classList.contains('collapsed'), 'v9: повторный клик раскрыл блок');
+  ok(realmGet('kanban.calNoDueCollapsed') === '0', 'v9: localStorage kanban.calNoDueCollapsed=0 после второго клика');
+  // reload-сценарий: persisted state восстанавливается
+  realmSet('kanban.calNoDueCollapsed', '1');
+  w.eval('__test.state.calNoDueCollapsed = (function(){ try { return localStorage.getItem("kanban.calNoDueCollapsed") === "1"; } catch (_) { return false; } })();');
+  w.__test.renderApp();
+  ok(document.querySelector('#ws-calendar .cal-nodue').classList.contains('collapsed'), 'v9: после reload с persists=1 блок свёрнут');
+  realmSet('kanban.calNoDueCollapsed', '0');
+  w.eval('__test.state.calNoDueCollapsed = false;');
+  w.__test.renderApp();
 
   console.log('\nDOM-тест: ' + passed + ' OK, ' + failed + ' FAIL');
   process.exit(failed ? 1 : 0);

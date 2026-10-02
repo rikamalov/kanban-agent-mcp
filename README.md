@@ -168,8 +168,10 @@ Agent auth: `Authorization: Bearer kb_…` on `/api/*` and `/mcp`.
 
 ```
 GET/POST /api/projects          PATCH/DELETE /api/projects/:id (+?archived=0|1|all)
+GET/PUT /api/projects/:id/access  {user_ids:[…]} (admin only; PUT = full replace)
 GET/POST /api/tasks             GET /api/tasks?project=<id>|none
 PATCH/DELETE /api/tasks/:id     POST /api/tasks/:id/move {stage, before_id?|after_id?}
+GET /api/tasks/:id
 GET/POST /api/stages            PATCH/DELETE /api/stages/:id?reassign=<stage_id>
 GET/POST /api/members           PATCH/DELETE /api/members/:id
 GET/POST /api/custom-fields     PATCH/DELETE /api/custom-fields/:id
@@ -186,6 +188,13 @@ Stages are dynamic: ids come from `GET /api/stages`. Exactly one stage has
 `is_done: 1` (the finish); completion checks use the flag, not a hardcoded
 id. `project_id: null` is a valid location (“No project”).
 
+Tasks accept an optional `urgency` field (`'h' | 'm' | 'l'`, empty/clears to
+`null`) on create/patch — shown as a colored square next to the task number.
+
+Project visibility: `admin` sessions and bearer tokens see every project;
+`member` sessions see only projects granted to them via
+`/api/projects/:id/access` (and cannot see “No project” tasks).
+
 ## Files
 
 | Path | What |
@@ -193,7 +202,7 @@ id. `project_id: null` is a valid location (“No project”).
 | `server.js` | backend: stdlib http + sqlite/pg adapters, auth (scrypt), static with ETag |
 | `store/` | storage engine selection, PostgreSQL sync adapter (`pg` in a worker) |
 | `public/` | frontend: `index.html` + `app.js` (app), `login.html`, `setup.html`, `style.css` |
-| `.test/` | jsdom DOM test suite (`node node_modules/.bin` — see `npm test`; needs `jsdom`) |
+| `.test/` | jsdom DOM test suite (ws: 134 checks incl. v9 scenarios; mobile: 35 — `npm test`) |
 | `Dockerfile` | image: node:26-alpine + server + public + store |
 
 ## Development
