@@ -4018,11 +4018,11 @@ function openTaskModal(id) {
           '<div class="notes-head">' +
             '<span class="field-label">' + esc(tr('card.notes')) + '</span>' +
             '<div class="notes-tools">' +
-              '<button type="button" class="btn ghost btn-sm" id="notes-toggle">' + esc(tr('misc.preview')) + '</button>' +
+              '<button type="button" class="btn ghost btn-sm" id="notes-toggle">' + esc(tr('misc.editor')) + '</button>' +
             '</div>' +
           '</div>' +
-          '<textarea id="mf-notes" rows="8" placeholder="Markdown… (# h1, **bold**, - list)">' + esc(t.notes || '') + '</textarea>' +
-          '<div id="notes-preview" class="md-preview" hidden></div>' +
+          '<textarea id="mf-notes" rows="8" placeholder="Markdown… (# h1, **bold**, - list)" hidden>' + esc(t.notes || '') + '</textarea>' +
+          '<div id="notes-preview" class="md-preview"></div>' +
         '</div>' +
       '</div>' +
       '<div class="modal-foot">' +
@@ -4042,6 +4042,8 @@ function openTaskModal(id) {
   const notesTa = $('#mf-notes', overlay);
   const notesPrev = $('#notes-preview', overlay);
   const notesToggle = $('#notes-toggle', overlay);
+  /* По умолчанию заметки открываются в режиме markdown-просмотра. */
+  notesPrev.innerHTML = renderMarkdown(notesTa.value) || '<p class="md-empty">' + esc(tr('misc.notes_empty')) + '</p>';
   notesToggle.addEventListener('click', () => {
     const show = notesPrev.hidden;
     if (show) {

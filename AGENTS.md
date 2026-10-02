@@ -114,9 +114,12 @@ After deploy checks: login via the API works, `/api/tasks` returns data.
    lives on the `.side-item.project-row` wrapper.
 6. **Markdown notes** are rendered by the built-in parser
    (`renderMarkdown`/`mdInline`), HTML is ALWAYS escaped
-   (`escapeHtmlAttr` first) — XSS test relies on it.
+   (`escapeHtmlAttr` first) — XSS test relies on it. The task modal opens
+   notes in **markdown preview** by default; editing is behind the
+   `#notes-toggle` button (do not flip the default back).
 7. **Test suite:** DOM test `.test/kanban-ws-test-v2.js` (jsdom, mock fetch,
-   47 checks). Run: `node .test/kanban-ws-test-v2.js` (jsdom from npm).
+   63 checks; includes the notes-open-in-markdown-preview scenario). Run:
+   `node .test/kanban-ws-test-v2.js` (jsdom from npm).
    Mobile drawer: `.test/kanban-mobile-test.js` (35 checks: burger, scrim,
    side-open, vs-label, settings gear pop).
 8. **Calendar never touches position/stage**: calendar drag changes only

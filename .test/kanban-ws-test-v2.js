@@ -302,6 +302,23 @@ function ok(cond, name) {
   const mfp = document.querySelector('#mf-project');
   ok(mfp && !![...mfp.options].find((o) => o.value === 'none'), 'модалка: селект проекта содержит «Без проекта»');
 
+  /* Заметки: по умолчанию markdown-просмотр, редактор — по кнопке */
+  const noteTa = document.querySelector('#mf-notes');
+  const notePrev = document.querySelector('#notes-preview');
+  const noteToggle = document.querySelector('#notes-toggle');
+  ok(noteTa && noteTa.hidden, 'заметки: редактор скрыт при открытии задачи');
+  ok(notePrev && !notePrev.hidden, 'заметки: markdown-просмотр виден сразу при открытии');
+  ok(notePrev && !!notePrev.querySelector('.md-empty'), 'заметки: пустые заметки — заглушка в просмотре');
+  const noteBtnLabel = noteToggle.textContent.trim();
+  noteToggle.click();
+  ok(!noteTa.hidden && notePrev.hidden, 'заметки: кнопка переключила в редактор');
+  ok(noteToggle.textContent.trim() !== noteBtnLabel, 'заметки: подпись кнопки сменилась на редактор');
+  noteTa.value = '# Заголовок\n\n- пункт **жирный**';
+  noteToggle.click();
+  ok(noteTa.hidden && !notePrev.hidden, 'заметки: кнопка вернула markdown-просмотр');
+  ok(!!notePrev.querySelector('h1'), 'заметки: просмотр отрисовал markdown-заголовок');
+  ok(!!notePrev.querySelector('ul li strong'), 'заметки: просмотр отрисовал список и жирный текст');
+
   /* --- Панель «Agents & tokens»: рендер с непустым списком (регрессия 565c1d2) --- */
   w.__test.openAgentsPanel();
   await new Promise((r) => setTimeout(r, 10)); // loadTokens отработал
