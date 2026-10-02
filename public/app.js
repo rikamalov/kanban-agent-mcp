@@ -1768,7 +1768,7 @@ function renderCalCard(t, inMonth) {
   return '<article class="cal-card' + (inMonth === false ? ' out' : '') + (overdue ? ' overdue' : '') + (done ? ' done' : '') + '" draggable="true" data-id="' + esc(t.id) + '" title="' + esc(stageLabel(stage)) + (overdue ? ' · ' + tr('board.overdue') : '') + '">' +
     '<span class="cal-stage-bar" style="background:' + esc(stageColor(stage)) + '"></span>' +
     '<span class="cal-card-grip">' + ICONS.grip + '</span>' +
-    '<span class="task-num">#' + esc(t.id) + '</span>' + urgencySquareHTML(t) +
+    urgencySquareHTML(t) +
     '<span class="cal-card-title">' + esc(t.title) + '</span>' +
     '<span class="cal-assignee">' + (assigneeOf(t) ? esc((assigneeOf(t).initials || initials(assigneeOf(t).name))) : '') + '</span>' +
   '</article>';
@@ -3622,7 +3622,7 @@ function renderCard(t) {
   }
   const card = el(
     '<article class="card" draggable="true" data-id="' + esc(t.id) + '">' +
-      '<div class="card-title"><span class="task-num">#' + esc(t.id) + '</span>' + urgencySquareHTML(t) + esc(t.title) + '</div>' +
+      '<div class="card-title">' + urgencySquareHTML(t) + '<span class="task-num">#' + esc(t.id) + '</span>' + esc(t.title) + '</div>' +
       (chips ? '<div class="card-chips">' + chips + '</div>' : '') +
     '</article>'
   );
@@ -3730,7 +3730,7 @@ function tableCellHTML(t, r) {
   const k = r.field_key;
   const ed = (kind, key) => ' data-edit="' + kind + '"' + (key ? ' data-key="' + esc(key) + '"' : '');
   if (k === 'title') {
-    return '<td class="td-title"' + ed('title') + '><span class="task-num">#' + esc(t.id) + '</span>' + urgencySquareHTML(t) + esc(t.title) + '</td>';
+    return '<td class="td-title"' + ed('title') + '>' + urgencySquareHTML(t) + '<span class="task-num">#' + esc(t.id) + '</span>' + esc(t.title) + '</td>';
   }
   if (k === 'urgency') {
     return '<td class="td-plain">' + urgencySquareHTML(t) + '</td>';
