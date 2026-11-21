@@ -178,6 +178,7 @@ const I18N = {
     'misc.task_n': 'Task #',
     'misc.done': 'Done',
     'misc.due': 'Due',
+    'misc.due_time': 'Time',
     'misc.enter_name_project': 'Enter a project name',
     'misc.enter_name_assignee': 'Enter an assignee name',
     'misc.enter_name_stage': 'Enter a stage name',
@@ -394,6 +395,7 @@ const I18N = {
     'misc.task_n': 'Задача #',
     'misc.done': 'Готово',
     'misc.due': 'Срок',
+    'misc.due_time': 'Время',
     'misc.enter_name_project': 'Введите имя проекта',
     'misc.enter_name_assignee': 'Введите имя исполнителя',
     'misc.enter_name_stage': 'Введите название этапа',
@@ -610,6 +612,7 @@ const I18N = {
     'misc.task_n': '任务 #',
     'misc.done': '完成',
     'misc.due': '截止',
+    'misc.due_time': '时间',
     'misc.enter_name_project': '请输入项目名称',
     'misc.enter_name_assignee': '请输入负责人姓名',
     'misc.enter_name_stage': '请输入阶段名称',
@@ -862,11 +865,47 @@ function fmtDate(iso) {
   return d.toLocaleDateString(currentLocaleTag(), { day: 'numeric', month: 'short' });
 }
 
+/* Срок может нести время. Канон: 'YYYY-MM-DDTHH:mm' (локальная зона, без 'Z');
+   «только дата» — 'YYYY-MM-DD'. Старое значение календарного DnD
+   'YYYY-MM-DDT12:00:00.000Z' — техническая заглушка, временем срока не считается. */
+const DUE_TIME_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/;
+
+function dueHasTime(iso) {
+  if (typeof iso !== 'string') return false;
+  const s = iso.trim();
+  if (DUE_TIME_RE.test(s)) return true;
+  if (/^\d{4}-\d{2}-\d{2}T12:00(:00(\.0+)?)?Z?$/i.test(s)) return false; // заглушка DnD календаря
+  return /T\d{2}:\d{2}/.test(s);                                         // ISO с временем из API/MCP
+}
+
+function dueTimeValue(iso) {
+  if (!dueHasTime(iso)) return '';
+  const d = parseDate(iso);
+  if (!d) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/* дата-инпут + time-инпут → значение для API (null, если дата пустая) */
+function dueISO(dateStr, timeStr) {
+  if (!dateStr) return null;
+  return timeStr ? dateStr + 'T' + timeStr : dateStr;
+}
+
+/* «2 окт., 14:30» — дата + время, если время задано */
+function fmtDue(iso) {
+  const d = fmtDate(iso);
+  if (!d) return null;
+  const t = dueTimeValue(iso);
+  return t ? d + ', ' + t : d;
+}
+
 function isOverdue(iso) {
   const d = parseDate(iso);
   if (!d) return false;
   const today = new Date();
-  d.setHours(23, 59, 59, 999);
+  /* только дата — срок истекает в конце дня; с временем — ровно в этот момент */
+  if (!dueHasTime(iso)) d.setHours(23, 59, 59, 999);
   return d < today;
 }
 
@@ -953,6 +992,9 @@ function taskCustomMap(t) {
     for (const v of t.field_values) {
       if (v && v.field_id != null) map[String(v.field_id)] = v.value_text != null ? v.value_text : v.value;
     }
+  }
+  if (t.custom && typeof t.custom === 'object') {
+    for (const [k, v] of Object.entries(t.custom)) map[String(k)] = v;
   }
   if (t.custom_values && typeof t.custom_values === 'object') {
     for (const [k, v] of Object.entries(t.custom_values)) map[String(k)] = v;
@@ -1827,7 +1869,8 @@ function attachCalDnD(wrap) {
     if (oldKey === date) return;
     /* оптимистично: подмена срока локально, при ошибке — откат */
     const snapshot = t.due_at;
-    t.due_at = date + 'T12:00:00.000Z';
+    /* дата меняется, заданное время сохраняется; «только дата» остаётся датой */
+    t.due_at = dueISO(date, dueTimeValue(t.due_at));
     renderBody();
     try {
       const updated = await api('PATCH', '/api/tasks/' + encodeURIComponent(id), { due_at: t.due_at });
@@ -3574,7 +3617,7 @@ function chipForField(t, r) {
   }
   if (k === 'due_at') {
     if (!t.due_at) return '';
-    return '<span class="chip chip-due' + (isOverdue(t.due_at) ? ' overdue' : '') + '">' + ICONS.calendar + esc(fmtDate(t.due_at)) + '</span>';
+    return '<span class="chip chip-due' + (isOverdue(t.due_at) ? ' overdue' : '') + '">' + ICONS.calendar + esc(fmtDue(t.due_at)) + '</span>';
   }
   if (k === 'assignee') {
     const name = assigneeLabel(t);
@@ -3747,7 +3790,7 @@ function tableCellHTML(t, r) {
   }
   if (k === 'due_at') {
     return '<td' + ed('date', 'due_at') + '>' + (t.due_at
-      ? '<span class="td-due' + (isOverdue(t.due_at) ? ' overdue' : '') + '">' + ICONS.calendar + esc(fmtDate(t.due_at)) + '</span>'
+      ? '<span class="td-due' + (isOverdue(t.due_at) ? ' overdue' : '') + '">' + ICONS.calendar + esc(fmtDue(t.due_at)) + '</span>'
       : '<span class="td-none">—</span>') + '</td>';
   }
   if (k === 'assignee') {
@@ -3897,7 +3940,8 @@ function startCellEdit(td) {
     editor = el('<input type="date" class="cell-edit" value="' + cur + '">');
     commit = (v) => {
       if (v !== cur) {
-        if (key === 'due_at') patchTask(t.id, { due_at: v || null });
+        /* правка даты в таблице не должна терять уже заданное время */
+        if (key === 'due_at') patchTask(t.id, { due_at: dueISO(v, dueTimeValue(t.due_at)) });
         else patchTask(t.id, { [key]: v });
       } else renderBody();
     };
@@ -4218,7 +4262,11 @@ function openTaskModal(id) {
         '</div>' +
         '<div class="field-row">' +
           '<label class="field"><span class="field-label">' + esc(tr('card.due')) + '</span>' +
-            '<input id="mf-due" type="date" value="' + dateInputValue(t.due_at) + '"></label>' +
+            '<span class="due-inputs">' +
+              '<input id="mf-due" type="date" value="' + dateInputValue(t.due_at) + '">' +
+              '<input id="mf-due-time" type="time" aria-label="' + esc(tr('misc.due_time')) + '" title="' + esc(tr('misc.due_time')) + '"' +
+                ' value="' + dueTimeValue(t.due_at) + '"' + (t.due_at ? '' : ' disabled') + '>' +
+            '</span></label>' +
           '<label class="field field-urgency"><span class="field-label">' + esc(tr('task.urgency')) + '</span>' +
             '<select id="mf-urgency"' + (t.urgency ? ' class="urg-sel urg-sel-' + esc(String(t.urgency).toLowerCase()) + '"' : '') + '>' +
               '<option value=""' + (t.urgency ? '' : ' selected') + '>—</option>' +
@@ -4282,6 +4330,13 @@ function openTaskModal(id) {
   urgSel.addEventListener('change', () => {
     urgSel.className = 'urg-sel urg-sel-' + urgSel.value;
   });
+  /* Время срока живёт только вместе с датой: без даты — пустое и заблокировано. */
+  const dueDateInp = $('#mf-due', overlay);
+  const dueTimeInp = $('#mf-due-time', overlay);
+  dueDateInp.addEventListener('change', () => {
+    dueTimeInp.disabled = !dueDateInp.value;
+    if (!dueDateInp.value) dueTimeInp.value = '';
+  });
   overlay.addEventListener('mousedown', (e) => {
     if (e.target === overlay) close();
   });
@@ -4306,12 +4361,13 @@ function openTaskModal(id) {
   $('#mf-save', overlay).addEventListener('click', async () => {
     const title = $('#mf-title', overlay).value.trim();
     if (!title) { toast(tr('misc.empty_title'), 'error'); return; }
-    const due = $('#mf-due', overlay).value; // YYYY-MM-DD или ''
+    const dueDate = $('#mf-due', overlay).value; // YYYY-MM-DD или ''
+    const dueTime = dueDate ? $('#mf-due-time', overlay).value : ''; // HH:mm или ''
     const uv = $('#mf-urgency', overlay).value;
     const payload = {
       title,
       stage: $('#mf-stage', overlay).value,
-      due_at: due || null,
+      due_at: dueISO(dueDate, dueTime),
       urgency: uv === '' ? null : uv,
       notes: $('#mf-notes', overlay).value,
     };

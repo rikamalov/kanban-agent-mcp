@@ -114,7 +114,7 @@ function defaultRows() {
 }
 
 const w = window;
-w.eval(appSrc + '\n;window.__test = { state, renderBody, boot, renderApp, renderSidebar, openAgentsPanel, closeAgentsPanel, renderAgentsModal, applyTheme, openTaskModal, renderTable, sortedTableTasks, renderCalendar };');
+w.eval(appSrc + '\n;window.__test = { state, renderBody, boot, renderApp, renderSidebar, openAgentsPanel, closeAgentsPanel, renderAgentsModal, applyTheme, openTaskModal, renderTable, sortedTableTasks, renderCalendar, dueHasTime, dueTimeValue, dueISO, fmtDue, isOverdue };');
 
 let passed = 0, failed = 0;
 function ok(cond, name) {
@@ -656,6 +656,107 @@ function ok(cond, name) {
   realmSet('kanban.calNoDueCollapsed', '0');
   w.eval('__test.state.calNoDueCollapsed = false;');
   w.__test.renderApp();
+
+  /* ============ 8. ВРЕМЯ СРОКА (v10) ============ */
+  const dstr = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const v10day = curYM + '-12';
+  data.tasks.push(mkTask(91, { due_at: v10day + 'T14:30', title: 'Со временем' }));
+  data.tasks.push(mkTask(92, { due_at: curYM + '-13', title: 'Только дата' }));
+  data.tasks.push(mkTask(93, { due_at: null, title: 'Без срока' }));
+  w.__test.state.view.type = 'all';
+  w.__test.state.viewType = 'KANBAN';
+  v9reload();
+
+  ok(w.eval('__test.dueHasTime("2026-10-02T14:30")') === true, 'v10: dueHasTime канон YYYY-MM-DDTHH:mm = true');
+  ok(w.eval('__test.dueHasTime("2026-10-02")') === false, 'v10: dueHasTime «только дата» = false');
+  ok(w.eval('__test.dueHasTime("2026-10-02T12:00:00.000Z")') === false, 'v10: заглушка DnD T12:00:00Z временем не считается');
+  ok(w.eval('__test.dueTimeValue("2026-10-02T14:30")') === '14:30', 'v10: dueTimeValue отдаёт HH:mm');
+  ok(w.eval('__test.dueISO("2026-10-02", "")') === '2026-10-02', 'v10: dueISO без времени = дата');
+  ok(w.eval('__test.dueISO("2026-10-02", "09:05")') === '2026-10-02T09:05', 'v10: dueISO склеивает дату и время');
+  ok(w.eval('__test.dueISO("", "09:05")') === null, 'v10: dueISO без даты = null');
+  ok(String(w.eval('__test.fmtDue("2026-10-02T14:30")')).includes('14:30'), 'v10: fmtDue показывает время');
+
+  const dueChip = document.querySelector('.card[data-id="91"] .chip-due');
+  ok(!!dueChip && dueChip.textContent.includes('14:30'), 'v10: чип срока на карточке содержит время');
+  const noTimeChip = document.querySelector('.card[data-id="92"] .chip-due');
+  ok(!!noTimeChip && !/\d{1,2}:\d{2}/.test(noTimeChip.textContent), 'v10: чип без времени часы не показывает');
+
+  /* модалка: дата и время в одной строке, сохранение без правок время не теряет */
+  jsClick(document.querySelector('.card[data-id="91"]'));
+  await new Promise((r) => setTimeout(r, 30));
+  const mfDue = document.querySelector('#mf-due');
+  const mfDueTime = document.querySelector('#mf-due-time');
+  ok(!!mfDue && !!mfDueTime, 'v10: в модалке есть #mf-due и #mf-due-time');
+  ok(!!mfDue && mfDue.value === v10day, 'v10: #mf-due = дата срока');
+  ok(!!mfDueTime && mfDueTime.value === '14:30', 'v10: #mf-due-time = 14:30');
+  ok(!!mfDue && !!mfDueTime && mfDue.closest('.due-inputs') !== null && mfDue.closest('.due-inputs') === mfDueTime.closest('.due-inputs'), 'v10: дата и время в одном контейнере .due-inputs (одна строка)');
+  ok(!!mfDueTime && mfDueTime.disabled === false, 'v10: время активно при заполненной дате');
+  const cssV10 = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+  ok(/\.due-inputs\s*\{[^}]*display:\s*flex/.test(cssV10), 'v10: css .due-inputs — flex-строка');
+  requests.length = 0;
+  jsClick(document.querySelector('#mf-save'));
+  await new Promise((r) => setTimeout(r, 30));
+  const v10patch = requests.find((r) => r.method === 'PATCH' && r.u.includes('/api/tasks/91'));
+  ok(!!v10patch && v10patch.body.due_at === v10day + 'T14:30', 'v10: сохранение без правок сохраняет время');
+
+  /* без даты время заблокировано; ввод даты включает и сохраняет время */
+  jsClick(document.querySelector('.card[data-id="93"]'));
+  await new Promise((r) => setTimeout(r, 30));
+  const mfDue6 = document.querySelector('#mf-due');
+  const mfDueTime6 = document.querySelector('#mf-due-time');
+  ok(!!mfDueTime6 && mfDueTime6.disabled === true, 'v10: без даты поле времени disabled');
+  const v10day2 = curYM + '-18';
+  mfDue6.value = v10day2;
+  mfDue6.dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok(document.querySelector('#mf-due-time').disabled === false, 'v10: после ввода даты время включилось');
+  document.querySelector('#mf-due-time').value = '09:05';
+  requests.length = 0;
+  jsClick(document.querySelector('#mf-save'));
+  await new Promise((r) => setTimeout(r, 30));
+  const p6v10 = requests.find((r) => r.method === 'PATCH' && r.u.includes('/api/tasks/93'));
+  ok(!!p6v10 && p6v10.body.due_at === v10day2 + 'T09:05', 'v10: модалка сохраняет дату+время одним значением');
+
+  /* таблица: inline-правка даты не теряет заданное время */
+  w.__test.state.viewType = 'TABLE';
+  v9reload();
+  const tr91 = document.querySelector('tr[data-id="91"]');
+  const td91 = tr91 && tr91.querySelector('td[data-edit="date"][data-key="due_at"]');
+  ok(!!td91, 'v10: в таблице ячейка срока редактируемая');
+  ok(!!td91 && td91.textContent.includes('14:30'), 'v10: в таблице у срока видно время');
+  if (td91) {
+    jsClick(td91);
+    await new Promise((r) => setTimeout(r, 10));
+    const editor91 = td91.querySelector('.cell-edit');
+    ok(!!editor91, 'v10: inline-редактор даты открылся');
+    if (editor91) {
+      const nd = curYM + '-21';
+      editor91.value = nd;
+      requests.length = 0;
+      editor91.dispatchEvent(new w.Event('change', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      const pel = requests.filter((r) => r.method === 'PATCH' && r.u.includes('/api/tasks/91')).pop();
+      ok(!!pel && pel.body.due_at === nd + 'T14:30', 'v10: inline-правка даты сохранила время 14:30');
+    }
+  }
+
+  /* календарь: перенос на другой день сохраняет время */
+  w.__test.state.viewType = 'CALENDAR';
+  v9reload();
+  const dropCell = [...document.querySelectorAll('#ws-calendar .cal-cell')].find((c) => c.dataset.date === curYM + '-24');
+  ok(!!dropCell, 'v10: ячейка 24-го найдена');
+  if (dropCell) {
+    w.__test.state.calDragged = '91';
+    dropCell.dispatchEvent(new w.Event('drop', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    ok(v9t(91).due_at === curYM + '-24T14:30', 'v10: drop в календаре сохранил время 14:30');
+  }
+
+  /* просрочка: с временем — в момент времени, без времени — в конце дня */
+  const yest = new Date(); yest.setDate(yest.getDate() - 1);
+  const tom = new Date(); tom.setDate(tom.getDate() + 1);
+  ok(w.eval('__test.isOverdue("' + dstr(yest) + 'T23:59")') === true, 'v10: вчерашнее время — просрочено');
+  ok(w.eval('__test.isOverdue("' + dstr(yest) + '")') === true, 'v10: вчерашняя дата без времени — просрочена');
+  ok(w.eval('__test.isOverdue("' + dstr(tom) + 'T00:01")') === false, 'v10: завтрашнее время — не просрочено');
 
   console.log('\nDOM-тест: ' + passed + ' OK, ' + failed + ' FAIL');
   process.exit(failed ? 1 : 0);

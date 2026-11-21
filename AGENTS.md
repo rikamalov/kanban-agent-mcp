@@ -107,9 +107,14 @@ After deploy checks: login via the API works, `/api/tasks` returns data.
    order is set by dragging. Any server sort breaks drop.
 3. **Drag onto empty columns**: take `targetStage` from the `data-stage` of
    the COLUMN, not a neighbor card.
-4. **CUSTOM fields:** server-side VALUE validation is lenient (NUMBER accepts
-   a number OR a numeric string — browser `input.value` is always a string;
-   CHECKBOX — `'1'/'0'/'true'/'false'`). Empty string = clear value (null).
+4. **CUSTOM fields:** the SERVER returns task custom values under the key
+   **`custom`** — `{...task, custom: {<field_id>: value}}` (REST list/get, MCP).
+   The frontend reads them in `taskCustomMap()`; if that helper does not read
+   `t.custom`, the custom column/modal input is empty, **and saving a task from
+   the modal sends `custom:<id>: null` and wipes the stored value** (silent data
+   loss on an unrelated edit). Server-side VALUE validation is lenient (NUMBER
+   accepts a number OR a numeric string — browser `input.value` is always a
+   string; CHECKBOX — `'1'/'0'/'true'/'false'`). Empty string = clear value (null).
 5. **Archived project**: row clicks go through `.project-open`; `data-view`
    lives on the `.side-item.project-row` wrapper.
 6. **Markdown notes** are rendered by the built-in parser
@@ -118,11 +123,14 @@ After deploy checks: login via the API works, `/api/tasks` returns data.
    notes in **markdown preview** by default; editing is behind the
    `#notes-toggle` button (do not flip the default back).
 7. **Test suite:** DOM test `.test/kanban-ws-test-v2.js` (jsdom, mock fetch,
-  134 checks; includes the notes-open-in-markdown-preview and v9 scenarios:
-  urgency, project access, theme, add-on-top, no-due collapse). Run:
-  `node .test/kanban-ws-test-v2.js` (jsdom from npm).
+  163 checks; includes the notes-open-in-markdown-preview, v9 scenarios
+  (urgency, project access, theme, add-on-top, no-due collapse) and v10
+  due-time scenarios). Run: `node .test/kanban-ws-test-v2.js` (jsdom from npm).
    Mobile drawer: `.test/kanban-mobile-test.js` (35 checks: burger, scrim,
    side-open, vs-label, settings gear pop).
+   Live-server e2e for due time: `KANBAN_PORT=3197 KANBAN_DATA=<empty dir>
+   KANBAN_INSECURE_COOKIE=1 node server.js &` then
+   `python3 .test/e2e-due-time.py http://127.0.0.1:3197`.
 8. **Calendar never touches position/stage**: calendar drag changes only
    `due_at` (PATCH), kanban drag — `/move`. Drag states are isolated:
    `state.calDragged` ≠ `state.dragged`. Calendar is a separate view
@@ -172,6 +180,16 @@ After deploy checks: login via the API works, `/api/tasks` returns data.
     machine paths anywhere in code/docs; `validColor()` (strict `#rrggbb`)
     must stay on every color write path; unexpected 500s return a generic
     `Internal server error` (no `err.message` echo).
+20. **Due date may carry a time (v10)**: `due_at` is either `YYYY-MM-DD`
+    (date only) or `YYYY-MM-DDTHH:mm` in LOCAL time (no `Z`, 16 chars).
+    `dueHasTime()` decides rendering, so the legacy calendar-DnD placeholder
+    `…T12:00:00.000Z` never shows up as 15:00. The modal has two controls in
+    one `.due-inputs` row (`#mf-due` + `#mf-due-time`, time disabled without
+    a date) and sends one merged value via `dueISO()`. EVERY write path that
+    changes the date must preserve the existing time: table inline edit and
+    calendar drag both use `dueISO(date, dueTimeValue(...))` — a plain
+    `{due_at: v}` wipes it. `isOverdue()` compares the exact moment when a
+    time is set, end of day otherwise.
 
 ## Style rules
 

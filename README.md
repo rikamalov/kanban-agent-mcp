@@ -191,6 +191,10 @@ id. `project_id: null` is a valid location (“No project”).
 Tasks accept an optional `urgency` field (`'h' | 'm' | 'l'`, empty/clears to
 `null`) on create/patch — shown as a colored square next to the task number.
 
+`due_at` is either `YYYY-MM-DD` (date only) or `YYYY-MM-DDTHH:mm` in local
+time — the board shows date and time in one chip ("2 Oct, 14:30"); a task
+with a time becomes overdue at that exact moment instead of the day's end.
+
 Project visibility: `admin` sessions and bearer tokens see every project;
 `member` sessions see only projects granted to them via
 `/api/projects/:id/access` (and cannot see “No project” tasks).

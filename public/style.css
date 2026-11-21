@@ -613,6 +613,11 @@ h1, h2, p { margin: 0; }
 }
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 1; min-width: 0; }
+/* Срок: дата и время — в одной строке (время необязательно, без даты неактивно) */
+.due-inputs { display: flex; gap: 6px; align-items: center; }
+.due-inputs input[type="date"] { flex: 1 1 auto; min-width: 0; }
+.due-inputs input[type="time"] { flex: 0 0 96px; }
+.due-inputs input:disabled { opacity: 0.55; }
 /* Срочность: компактное поле в ряду со Сроком; сам select окрашен значением. */
 .field-urgency { flex: 0 0 130px; }
 select.urg-sel {
